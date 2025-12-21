@@ -14,6 +14,7 @@ export default defineConfig({
 
   // Required for SharedArrayBuffer (used by some WASM)
   server: {
+    port: 3001,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
