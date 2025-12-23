@@ -32,7 +32,7 @@
  */
 
 import * as Comlink from 'comlink';
-import { pipeline, env, type TextGenerationPipeline } from '@xenova/transformers';
+import { pipeline, env, type TextGenerationPipeline } from '@huggingface/transformers';
 import type {
   ModelWorkerAPI,
   ModelId,
@@ -54,6 +54,7 @@ import type {
  */
 env.allowLocalModels = false;
 env.useBrowserCache = true;
+// env.backends.onnx.wasm.threads = 1;
 
 // ============================================================================
 // WORKER STATE
@@ -102,6 +103,7 @@ const workerAPI: ModelWorkerAPI = {
 
       // Create the pipeline with progress callback
       currentModel = await pipeline('text-generation', modelId, {
+        device: 'wasm',
         progress_callback: (progress: {
           status: string;
           file?: string;
