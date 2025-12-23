@@ -296,11 +296,40 @@ export class TensorView {
 
   /**
    * Multiply by a scalar or another tensor element-wise.
+   *
+   * We use element-wise multiplication frequently in attention analysis,
+   * particularly for computing entropy: H = -Σ p * log(p).
+   *
+   * @param other - Scalar or tensor with same shape
+   * @returns New tensor with element-wise products
+   *
+   * @example
+   * ```typescript
+   * const a = new TensorView(new Float32Array([1, 2, 3]), [3]);
+   * a.mul(2);           // [2, 4, 6]
+   * a.mul(a);           // [1, 4, 9] (element-wise squares)
+   * ```
    */
-  mul(_other: TensorView | number): TensorView {
-    // RESEARCHER TODO: Implement multiplication
-    // Similar pattern to add/sub
-    throw new Error('mul not yet implemented');
+  mul(other: TensorView | number): TensorView {
+    if (typeof other === 'number') {
+      // Scalar multiplication (same as scale, but consistent API)
+      const result = new Float32Array(this.data.length);
+      for (let i = 0; i < this.data.length; i++) {
+        result[i] = this.data[i] * other;
+      }
+      return new TensorView(result, [...this.shape]);
+    }
+
+    // Element-wise multiplication with another tensor
+    if (!this.shapesMatch(other.shape)) {
+      throw new Error(`Shape mismatch: ${this.shape} vs ${other.shape}`);
+    }
+
+    const result = new Float32Array(this.data.length);
+    for (let i = 0; i < this.data.length; i++) {
+      result[i] = this.data[i] * other.data[i];
+    }
+    return new TensorView(result, [...this.shape]);
   }
 
   /**
