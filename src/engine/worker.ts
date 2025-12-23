@@ -99,10 +99,11 @@ const workerAPI: ModelWorkerAPI = {
     try {
       currentStatus = 'loading';
 
-      console.log(`Loading model: ${modelId}`);
+      console.log(`Loading model: ${modelId} (Full Precision)`);
 
       // Create the pipeline with progress callback
       currentModel = await pipeline('text-generation', modelId, {
+        dtype: "fp32",
         device: 'wasm',
         progress_callback: (progress: {
           status: string;
