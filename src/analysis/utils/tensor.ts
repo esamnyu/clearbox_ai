@@ -237,7 +237,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement argmax
    * Returns indices where maximum occurs
    */
-  argmax(axis?: number): TensorView | number {
+  argmax(_axis?: number): TensorView | number {
     throw new Error('argmax not yet implemented');
   }
 
@@ -296,17 +296,46 @@ export class TensorView {
 
   /**
    * Multiply by a scalar or another tensor element-wise.
+   *
+   * We use element-wise multiplication frequently in attention analysis,
+   * particularly for computing entropy: H = -Σ p * log(p).
+   *
+   * @param other - Scalar or tensor with same shape
+   * @returns New tensor with element-wise products
+   *
+   * @example
+   * ```typescript
+   * const a = new TensorView(new Float32Array([1, 2, 3]), [3]);
+   * a.mul(2);           // [2, 4, 6]
+   * a.mul(a);           // [1, 4, 9] (element-wise squares)
+   * ```
    */
   mul(other: TensorView | number): TensorView {
-    // RESEARCHER TODO: Implement multiplication
-    // Similar pattern to add/sub
-    throw new Error('mul not yet implemented');
+    if (typeof other === 'number') {
+      // Scalar multiplication (same as scale, but consistent API)
+      const result = new Float32Array(this.data.length);
+      for (let i = 0; i < this.data.length; i++) {
+        result[i] = this.data[i] * other;
+      }
+      return new TensorView(result, [...this.shape]);
+    }
+
+    // Element-wise multiplication with another tensor
+    if (!this.shapesMatch(other.shape)) {
+      throw new Error(`Shape mismatch: ${this.shape} vs ${other.shape}`);
+    }
+
+    const result = new Float32Array(this.data.length);
+    for (let i = 0; i < this.data.length; i++) {
+      result[i] = this.data[i] * other.data[i];
+    }
+    return new TensorView(result, [...this.shape]);
   }
 
   /**
    * Divide by a scalar or another tensor element-wise.
    */
-  div(other: TensorView | number): TensorView {
+  div(_other: TensorView | number): TensorView {
     // RESEARCHER TODO: Implement division
     throw new Error('div not yet implemented');
   }
@@ -351,7 +380,7 @@ export class TensorView {
    * Formula: softmax(x_i) = exp(x_i) / Σ exp(x_j)
    * Numerical stability: subtract max before exp
    */
-  softmax(axis?: number): TensorView {
+  softmax(_axis?: number): TensorView {
     throw new Error('softmax not yet implemented');
   }
 
@@ -368,7 +397,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement dot product
    * Shapes must be compatible: [a,b] · [b,c] → [a,c]
    */
-  dot(other: TensorView): TensorView {
+  dot(_other: TensorView): TensorView {
     throw new Error('dot not yet implemented');
   }
 
@@ -472,7 +501,7 @@ export class TensorView {
    *
    * RESEARCHER TODO: Implement squeeze
    */
-  squeeze(axis?: number): TensorView {
+  squeeze(_axis?: number): TensorView {
     throw new Error('squeeze not yet implemented');
   }
 
@@ -481,7 +510,7 @@ export class TensorView {
    *
    * RESEARCHER TODO: Implement unsqueeze
    */
-  unsqueeze(axis: number): TensorView {
+  unsqueeze(_axis: number): TensorView {
     throw new Error('unsqueeze not yet implemented');
   }
 
@@ -571,7 +600,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement fromNestedArray
    * Infer shape from nested structure, flatten to Float32Array
    */
-  static fromNestedArray(arr: NestedArray<number>): TensorView {
+  static fromNestedArray(_arr: NestedArray<number>): TensorView {
     throw new Error('fromNestedArray not yet implemented');
   }
 

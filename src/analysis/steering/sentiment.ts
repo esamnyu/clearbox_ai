@@ -13,9 +13,13 @@ import { TensorView } from '../utils/tensor';
 /**
  * Example prompts for computing sentiment steering vectors.
  *
+ * These prompts are used by computeSentimentSteering() to create contrastive
+ * pairs. The steering vector is computed as:
+ *   v = mean(positive_activations) - mean(negative_activations)
+ *
  * RESEARCHER TODO: Expand these lists with more diverse examples
  */
-const POSITIVE_PROMPTS = [
+export const POSITIVE_PROMPTS = [
   'I love this! It\'s absolutely wonderful',
   'This is the best day ever',
   'I\'m so happy and grateful',
@@ -23,7 +27,7 @@ const POSITIVE_PROMPTS = [
   'This makes me feel amazing',
 ];
 
-const NEGATIVE_PROMPTS = [
+export const NEGATIVE_PROMPTS = [
   'I hate this. It\'s absolutely terrible',
   'This is the worst day ever',
   'I\'m so sad and disappointed',
@@ -75,8 +79,8 @@ export interface HiddenStateRetriever {
  * RESEARCHER TODO: Implement steering vector computation
  */
 export async function computeSentimentSteering(
-  retriever: HiddenStateRetriever,
-  layer: number = 6
+  _retriever: HiddenStateRetriever,  // Prefixed: unused in placeholder
+  _layer: number = 6                  // Prefixed: unused in placeholder
 ): Promise<TensorView> {
   // RESEARCHER TODO: Implement
   //
