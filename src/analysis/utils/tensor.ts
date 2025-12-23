@@ -337,7 +337,37 @@ export class TensorView {
    */
   div(_other: TensorView | number): TensorView {
     // RESEARCHER TODO: Implement division
-    throw new Error('div not yet implemented');
+    if (typeof _other === 'number') {
+      // check for division by zero
+      if (_other === 0) {
+        throw new Error('Division by zero is not allowed for scalar division.');
+      }
+      // scalar div
+      const result = new Float32Array(this.data.length);
+      for (let i = 0; i < this.data.length; i++) {
+        result[i] = this.data[i] / _other;
+      }
+      return new TensorView(result, [...this.shape]);
+    }
+
+    // element-wise div
+    if (!this.shapesMatch(_other.shape)) {
+      throw new Error(`Shape mismatch: ${this.shape} vs ${_other.shape}`);
+    }
+
+    const result = new Float32Array(this.data.length);
+    for (let i = 0; i < this.data.length; i++) {
+      if (_other.data[i] === 0) {
+        // throw new Error(
+        //   `Division by zero at index ${i} in element-wise division.`
+        // );
+        result[i] = NaN;
+      } else {
+        result[i] = this.data[i] / _other.data[i];
+      }
+    }
+    return new TensorView(result, [...this.shape]);
+    // throw new Error('div not yet implemented');
   }
 
   /**
