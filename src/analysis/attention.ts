@@ -69,12 +69,12 @@ export function computeNorm(hidden: TensorView): number {
  * RESEARCHER TODO: Implement induction head detection logic
  */
 export function detectInductionHeads(
-  attention: TensorView,  // [heads, seq, seq]
-  tokens: string[],
-  threshold: number = 0.3
+  _attention: TensorView,  // [heads, seq, seq] - unused in placeholder
+  _tokens: string[],       // Prefixed: unused in placeholder implementation
+  _threshold: number = 0.3 // Prefixed: unused in placeholder implementation
 ): number[] {
-  const numHeads = attention.shape[0];
-  const seqLen = attention.shape[1];
+  // Note: attention.shape[0] is numHeads, attention.shape[1] is seqLen
+  // These will be used when implementing the detection logic
   const inductionHeads: number[] = [];
 
   // RESEARCHER TODO: Implement detection logic here
@@ -114,10 +114,10 @@ export function detectInductionHeads(
  * RESEARCHER TODO: Implement attention pattern classification
  */
 export function classifyAttentionHead(
-  attention: TensorView,  // [seq, seq]
-  tokens: string[]
+  _attention: TensorView,  // [seq, seq] - unused in placeholder
+  _tokens: string[]        // Prefixed: unused in placeholder implementation
 ): AttentionPattern {
-  const seqLen = attention.shape[0];
+  // Note: attention.shape[0] is seqLen, used when implementing classification
 
   // RESEARCHER TODO: Implement classification logic
   //
@@ -153,7 +153,7 @@ export function classifyAttentionHead(
  * RESEARCHER TODO: Implement entropy calculation
  */
 export function computeAttentionEntropy(
-  attention: TensorView  // [heads, seq, seq]
+  _attention: TensorView  // [heads, seq, seq] - Prefixed: unused in placeholder
 ): TensorView {
   // RESEARCHER TODO: Implement
   //

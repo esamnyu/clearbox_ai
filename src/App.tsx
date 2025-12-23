@@ -1,10 +1,30 @@
 /**
- * Session 1: Minimal app to verify model loading and tokenization.
+ * NeuroScope-Web - Session 1: Model Loading & Tokenization
+ * ==========================================================
+ *
+ * This is the main application component for Session 1 of NeuroScope-Web.
+ * It provides a simple UI to verify that the model loading and tokenization
+ * pipeline is working correctly.
+ *
+ * WHAT THIS FILE DOES:
+ * 1. Initializes the Web Worker on mount (for background model loading)
+ * 2. Provides a button to load the GPT-2 model (~500MB download)
+ * 3. Shows loading progress with a progress bar
+ * 4. Allows text input for tokenization
+ * 5. Displays tokens and their IDs for verification
  *
  * CHECKPOINT TEST:
- * 1. Type "Hello world"
- * 2. See tokens: ["Hello", " world"]
- * 3. See IDs: [15496, 995]
+ * 1. Click "Load GPT-2" and wait for download
+ * 2. Type "Hello world"
+ * 3. Click "Tokenize"
+ * 4. Verify tokens: ["Hello", " world"]
+ * 5. Verify IDs: [15496, 995]
+ *
+ * ERROR HANDLING:
+ * - If model loading fails, an error message is shown with a retry button
+ * - If the worker fails to initialize, the error is displayed
+ *
+ * @module App
  */
 
 import { useEffect, useState } from 'react';
@@ -12,7 +32,17 @@ import { useModelStore } from './store/modelStore';
 
 export default function App() {
   const [prompt, setPrompt] = useState('Hello world');
-  const { status, loadProgress, tokens, tokenIds, initWorker, loadModel, tokenize } = useModelStore();
+  const {
+    status,
+    loadProgress,
+    error,
+    tokens,
+    tokenIds,
+    initWorker,
+    loadModel,
+    tokenize,
+    reset,
+  } = useModelStore();
 
   // Initialize worker on mount
   useEffect(() => {
@@ -66,7 +96,23 @@ export default function App() {
         )}
 
         {status === 'error' && (
-          <div className="text-red-400">Failed to load model</div>
+          <div className="space-y-3">
+            <div className="text-red-400 font-medium">Failed to load model</div>
+            {error && (
+              <div className="text-sm text-red-300 bg-red-900/20 p-3 rounded border border-red-800">
+                {error}
+              </div>
+            )}
+            <button
+              onClick={() => {
+                reset();
+                handleLoadModel();
+              }}
+              className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded font-medium"
+            >
+              Retry
+            </button>
+          </div>
         )}
       </section>
 

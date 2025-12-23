@@ -1,14 +1,38 @@
 /**
- * Web Worker for model inference.
+ * Web Worker for Model Inference
+ * ================================
  *
- * Runs transformers.js off the main thread to keep UI responsive.
- * Communicates with main thread via Comlink.
+ * This file runs in a separate thread (Web Worker) to keep the UI responsive
+ * while loading and running the GPT-2 model. Without this, loading a 500MB
+ * model would freeze the browser.
+ *
+ * HOW IT WORKS:
+ * 1. The main thread (App.tsx) creates a Worker pointing to this file
+ * 2. Comlink wraps the worker to make method calls feel like normal async functions
+ * 3. When you call worker.loadModel(), this file downloads the model in the background
+ * 4. When you call worker.tokenize(text), this file processes the text using the model
+ *
+ * KEY FUNCTIONS:
+ * - loadModel(modelId)  : Downloads and initializes the GPT-2 model (~500MB)
+ * - unloadModel()       : Frees memory by removing the model
+ * - getStatus()         : Returns current state ('idle'|'loading'|'ready'|'error')
+ * - tokenize(text)      : Converts text to tokens (e.g., "Hello" → [15496])
+ * - generate(prompt)    : Generates new text from a prompt
+ *
+ * WHY A WEB WORKER?
+ * - ML models are CPU-intensive and would block the main thread
+ * - Workers run in parallel, keeping button clicks and animations smooth
+ * - Transformers.js uses WASM which benefits from dedicated thread time
+ *
+ * COMMUNICATION:
+ * - Uses Comlink library for type-safe RPC (Remote Procedure Calls)
+ * - Progress callbacks use Comlink.proxy() to work across the thread boundary
  *
  * @module engine/worker
  */
 
 import * as Comlink from 'comlink';
-import { pipeline, env } from '@xenova/transformers';
+import { pipeline, env, type TextGenerationPipeline } from '@xenova/transformers';
 import type {
   ModelWorkerAPI,
   ModelId,
@@ -17,17 +41,39 @@ import type {
   TokenizationResult,
   GenerateOptions,
   GenerationResult,
-  SerializedTensor,
 } from './types';
 
-// Configure transformers.js
+// ============================================================================
+// TRANSFORMERS.JS CONFIGURATION
+// ============================================================================
+
+/**
+ * Configure transformers.js runtime behavior.
+ * - allowLocalModels: false - Only load from Hugging Face CDN
+ * - useBrowserCache: true - Cache model files in browser for faster reload
+ */
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
-/** Current model state */
-let currentModel: Awaited<ReturnType<typeof pipeline>> | null = null;
+// ============================================================================
+// WORKER STATE
+// ============================================================================
+
+/**
+ * Current loaded model instance.
+ * The TextGenerationPipeline provides both generation and tokenization APIs.
+ */
+let currentModel: TextGenerationPipeline | null = null;
+
+/** Currently loaded model identifier (e.g., 'Xenova/gpt2') */
 let currentModelId: ModelId | null = null;
+
+/** Current worker state for external status queries */
 let currentStatus: ModelStatus = 'idle';
+
+// ============================================================================
+// WORKER API IMPLEMENTATION
+// ============================================================================
 
 /**
  * The worker API implementation.
@@ -187,8 +233,18 @@ const workerAPI: ModelWorkerAPI = {
         return_full_text: true,
       });
 
-      // Extract the generated text
-      const generatedText = output[0].generated_text;
+      /**
+       * Extract the generated text from pipeline output.
+       *
+       * The output structure from transformers.js can vary depending on version
+       * and configuration. We safely handle both array and object formats:
+       * - Array format: [{ generated_text: "..." }, ...]
+       * - Direct format: { generated_text: "..." }
+       */
+      const firstResult = Array.isArray(output) ? output[0] : output;
+      const generatedText = 'generated_text' in firstResult
+        ? String(firstResult.generated_text)
+        : String(firstResult);
 
       // Tokenize the full output for display
       const tokenization = await this.tokenize(generatedText);

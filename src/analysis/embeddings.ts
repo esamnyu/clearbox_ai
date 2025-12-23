@@ -127,7 +127,7 @@ export function cosineSimilarity(a: TensorView, b: TensorView): number {
  * RESEARCHER TODO: Implement pairwise similarity computation
  */
 export function pairwiseSimilarity(
-  embeddings: TensorView  // [tokens, dim]
+  _embeddings: TensorView  // [tokens, dim] - Prefixed: unused in placeholder
 ): TensorView {
   // RESEARCHER TODO: Implement
   //
@@ -221,8 +221,8 @@ export function computePCA(
  * Use cosine similarity as distance metric
  */
 export function findNearestNeighbors(
-  embeddings: TensorView,  // [tokens, dim]
-  k: number
+  _embeddings: TensorView,  // [tokens, dim] - Prefixed: unused in placeholder
+  _k: number                 // Prefixed: unused in placeholder
 ): number[][] {
   // RESEARCHER TODO: Implement
   //

@@ -237,7 +237,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement argmax
    * Returns indices where maximum occurs
    */
-  argmax(axis?: number): TensorView | number {
+  argmax(_axis?: number): TensorView | number {
     throw new Error('argmax not yet implemented');
   }
 
@@ -297,7 +297,7 @@ export class TensorView {
   /**
    * Multiply by a scalar or another tensor element-wise.
    */
-  mul(other: TensorView | number): TensorView {
+  mul(_other: TensorView | number): TensorView {
     // RESEARCHER TODO: Implement multiplication
     // Similar pattern to add/sub
     throw new Error('mul not yet implemented');
@@ -306,7 +306,7 @@ export class TensorView {
   /**
    * Divide by a scalar or another tensor element-wise.
    */
-  div(other: TensorView | number): TensorView {
+  div(_other: TensorView | number): TensorView {
     // RESEARCHER TODO: Implement division
     throw new Error('div not yet implemented');
   }
@@ -351,7 +351,7 @@ export class TensorView {
    * Formula: softmax(x_i) = exp(x_i) / Σ exp(x_j)
    * Numerical stability: subtract max before exp
    */
-  softmax(axis?: number): TensorView {
+  softmax(_axis?: number): TensorView {
     throw new Error('softmax not yet implemented');
   }
 
@@ -368,7 +368,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement dot product
    * Shapes must be compatible: [a,b] · [b,c] → [a,c]
    */
-  dot(other: TensorView): TensorView {
+  dot(_other: TensorView): TensorView {
     throw new Error('dot not yet implemented');
   }
 
@@ -472,7 +472,7 @@ export class TensorView {
    *
    * RESEARCHER TODO: Implement squeeze
    */
-  squeeze(axis?: number): TensorView {
+  squeeze(_axis?: number): TensorView {
     throw new Error('squeeze not yet implemented');
   }
 
@@ -481,7 +481,7 @@ export class TensorView {
    *
    * RESEARCHER TODO: Implement unsqueeze
    */
-  unsqueeze(axis: number): TensorView {
+  unsqueeze(_axis: number): TensorView {
     throw new Error('unsqueeze not yet implemented');
   }
 
@@ -571,7 +571,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement fromNestedArray
    * Infer shape from nested structure, flatten to Float32Array
    */
-  static fromNestedArray(arr: NestedArray<number>): TensorView {
+  static fromNestedArray(_arr: NestedArray<number>): TensorView {
     throw new Error('fromNestedArray not yet implemented');
   }
 
