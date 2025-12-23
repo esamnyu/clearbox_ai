@@ -172,26 +172,44 @@ const workerAPI: ModelWorkerAPI = {
     // Access the tokenizer from the pipeline
     const tokenizer = currentModel.tokenizer;
 
-    // Tokenize the input
+    // Tokenize the input (tokensizer returns bigints in transformers v3)
     const encoded = await tokenizer(text, {
-      return_tensors: false,
+      return_tensors: 'art', // explicit use of 'art' for onnx runtime
       padding: false,
       truncation: false,
     });
 
+    // need to convert bigint IDs to number IDs
+    const tensorData = encoded.input_ids.data;
+    const tokenIds: number[] = Array.from(tensorData).map((x) => Number(x));
+    console.log('Token IDs:', tokenIds);
+    console.log('Raw Tensor Data:', tensorData);
+
+    // handle attention masks if present and cast to number[]
+    let attentionMask: number[] = [];
+    if (encoded.attention_mask) {
+      const maskData = encoded.attention_mask.data;
+      attentionMask = Array.from(maskData).map((x) => Number(x));
+      console.log('Attention Mask:', attentionMask);
+    } else {
+      // if no attention mask, fallback to all ones
+      attentionMask = tokenIds.map(() => 1);
+    }
+
     // Get token strings by decoding each token ID individually
-    const tokenIds: number[] = encoded.input_ids;
+    // const tokenIds: number[] = encoded.input_ids;
     const tokens: string[] = [];
 
     for (const id of tokenIds) {
       const decoded = tokenizer.decode([id], { skip_special_tokens: false });
       tokens.push(decoded);
     }
+    console.log('Tokens:', tokens);
 
     return {
       tokens,
       tokenIds,
-      attentionMask: encoded.attention_mask ?? tokenIds.map(() => 1),
+      attentionMask,
     };
   },
 

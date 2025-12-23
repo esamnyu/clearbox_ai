@@ -175,11 +175,11 @@ export default function App() {
       <section className="mt-8 p-4 bg-slate-900/50 rounded-lg border border-slate-800/50 text-slate-400">
         <h3 className="font-semibold text-slate-300 mb-2">Session 1 Checkpoint</h3>
         <ol className="list-decimal list-inside space-y-1 text-sm">
-          <li>Click "Load GPT-2" and wait for download (~500MB)</li>
+          <li>Click "Load GPT-2" and wait for download (~500MB) (loading functionality fixed)</li>
           <li>Type "Hello world" in the input</li>
-          <li>Click "Tokenize"</li>
-          <li>Verify tokens: ["Hello", " world"]</li>
-          <li>Verify IDs: [15496, 995]</li>
+          <li>Click "Tokenize" (tokenization functionality fixed)</li>
+          <li>Verify tokens: ["Hello", " world"] (token display fixed)</li>
+          <li>Verify IDs: [15496, 995] (token ID casting fixed)</li>
         </ol>
       </section>
     </div>
