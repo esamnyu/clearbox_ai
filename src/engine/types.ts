@@ -100,6 +100,115 @@ export interface ModelWorkerAPI {
   generate(prompt: string, options?: GenerateOptions): Promise<GenerationResult>;
 }
 
+  // ============================================================================
+  // PIPELINE ABSTRACTION - Enables dependency injection for testing
+  // ============================================================================
+
+  /**
+   * Encoded output from the tokenizer.
+   * Mirrors the structure returned by transformers.js v3.
+   *
+   * @internal Used for pipeline abstraction, not part of public API.
+   */
+  export interface EncodedTokens {
+    input_ids: {
+      data: BigInt64Array | number[]
+    }
+    attention_mask?: {
+      data: BigInt64Array | number[]
+    }
+  }
+
+  /**
+   * Options passed to the tokenizer's encode function.
+   */
+  export interface TokenizerOptions {
+    return_tensors?: string
+    padding?: boolean
+    truncation?: boolean
+  }
+
+  /**
+   * Options for decoding token IDs back to text.
+   */
+  export interface DecodeOptions {
+    skip_special_tokens?: boolean
+  }
+
+  /**
+   * Abstraction over a tokenizer.
+   *
+   * This is a callable interface: the tokenizer itself is a function,
+   * but also has methods like `decode`.
+   *
+   * Production: wraps transformers.js PreTrainedTokenizer
+   * Testing: mock implementation with deterministic outputs
+   */
+  export interface TokenizerInterface {
+    (text: string, options: TokenizerOptions): Promise<EncodedTokens>
+    decode(ids: number[], options?: DecodeOptions): string
+  }
+
+  /**
+   * Configuration for text generation.
+   * Maps to transformers.js generation config.
+   */
+  export interface GenerationConfig {
+    max_new_tokens?: number
+    temperature?: number
+    top_k?: number
+    top_p?: number
+    do_sample?: boolean
+    return_full_text?: boolean
+  }
+
+  /**
+   * Single generation output from the pipeline.
+   */
+  export interface GenerationOutput {
+    generated_text?: string
+  }
+
+  /**
+   * Abstraction over a text-generation pipeline.
+   *
+   * Callable interface: pipeline(prompt, config) generates text.
+   * Also exposes the tokenizer for direct tokenization.
+   *
+   * Production: wraps transformers.js TextGenerationPipeline
+   * Testing: mock implementation with controlled outputs
+   */
+  export interface PipelineInterface {
+    tokenizer: TokenizerInterface
+    (prompt: string, config: GenerationConfig): Promise<GenerationOutput[]>
+  }
+
+  /**
+   * Configuration for pipeline creation.
+   */
+  export interface PipelineConfig {
+    dtype: string
+    device: string
+    progress_callback?: (progress: LoadProgress) => void
+  }
+
+  /**
+   * Factory for creating pipelines.
+   *
+   * This is the primary injection point for testing:
+   * - Production: creates real transformers.js pipelines
+   * - Unit tests: returns mock pipelines with instant, deterministic responses
+   * - Integration tests: loads tiny models for real tokenizer behavior
+   */
+  export interface PipelineFactory {
+    create(
+      task: 'text-generation',
+      modelId: ModelId,
+      config: PipelineConfig
+    ): Promise<PipelineInterface>
+  }
+
+
 // ============================================================================
 // RESEARCHER TYPES - Used in src/analysis/
 // ============================================================================
