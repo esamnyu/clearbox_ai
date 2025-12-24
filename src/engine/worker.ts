@@ -41,6 +41,8 @@ import type {
   TokenizationResult,
   GenerateOptions,
   GenerationResult,
+  PipelineFactory,
+  PipelineInterface,
 } from './types';
 
 // ============================================================================
@@ -55,6 +57,48 @@ import type {
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 // env.backends.onnx.wasm.threads = 1;
+
+// ============================================================================
+// PIPELINE FACTORY (Dependency Injection for Testing)
+// ============================================================================
+
+/**
+ * Default pipeline factory that wraps the real transformers.js pipeline.
+ * In production, this is used. In tests, it can be swapped with a mock.
+ */
+const defaultPipelineFactory: PipelineFactory = {
+  async create(task, modelId, config) {
+    // Use type assertion to bridge our generic interface with transformers.js specific types
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const options: any = {
+      dtype: config.dtype,
+      device: config.device,
+    };
+    if (config.progress_callback) {
+      options.progress_callback = config.progress_callback;
+    }
+    return await pipeline(task, modelId, options) as unknown as PipelineInterface;
+  },
+};
+
+/** Current factory - can be swapped for testing */
+let currentPipelineFactory: PipelineFactory = defaultPipelineFactory;
+
+/**
+ * Override the pipeline factory (used by tests).
+ * @internal
+ */
+function setPipelineFactory(factory: PipelineFactory): void {
+  currentPipelineFactory = factory;
+}
+
+/**
+ * Reset to default factory.
+ * @internal
+ */
+function resetPipelineFactory(): void {
+  currentPipelineFactory = defaultPipelineFactory;
+}
 
 // ============================================================================
 // WORKER STATE
@@ -101,17 +145,11 @@ const workerAPI: ModelWorkerAPI = {
 
       console.log(`Loading model: ${modelId} (Full Precision)`);
 
-      // Create the pipeline with progress callback
-      currentModel = await pipeline('text-generation', modelId, {
+      // Create the pipeline with progress callback (uses injected factory)
+      currentModel = await currentPipelineFactory.create('text-generation', modelId, {
         dtype: "fp32",
         device: 'wasm',
-        progress_callback: (progress: {
-          status: string;
-          file?: string;
-          progress?: number;
-          loaded?: number;
-          total?: number;
-        }) => {
+        progress_callback: (progress) => {
           if (onProgress) {
             onProgress({
               status: progress.status as LoadProgress['status'],
@@ -123,7 +161,7 @@ const workerAPI: ModelWorkerAPI = {
           }
           console.log(`[${modelId}] ${progress.status}: ${progress.file ?? ''} ${progress.progress?.toFixed(1) ?? ''}%`);
         },
-      });
+      }) as unknown as TextGenerationPipeline;
 
       currentModelId = modelId;
       currentStatus = 'ready';
@@ -298,8 +336,18 @@ const workerAPI: ModelWorkerAPI = {
   },
 };
 
-// Expose the API via Comlink
-Comlink.expose(workerAPI);
+// ============================================================================
+// TEST UTILITIES (only used in test environment)
+// ============================================================================
+
+const testAPI = {
+  _setPipelineFactory: setPipelineFactory,
+  _resetPipelineFactory: resetPipelineFactory,
+};
+
+// Expose the API via Comlink (includes test utilities)
+Comlink.expose({ ...workerAPI, ...testAPI });
 
 // Type export for the main thread
 export type { ModelWorkerAPI };
+export type TestAPI = typeof testAPI;

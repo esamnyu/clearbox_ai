@@ -21,9 +21,9 @@ export default defineConfig({
     },
   },
 
-  // Optimize dependencies
+  // Optimize dependencies for worker compatibility
   optimizeDeps: {
-    exclude: ['@xenova/transformers'],
+    include: ['@huggingface/transformers', 'comlink'],
   },
 
   // Worker configuration
@@ -36,7 +36,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          transformers: ['@xenova/transformers'],
+          transformers: ['@huggingface/transformers'],
         },
       },
     },
