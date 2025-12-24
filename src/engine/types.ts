@@ -110,13 +110,16 @@ export interface ModelWorkerAPI {
    *
    * @internal Used for pipeline abstraction, not part of public API.
    */
+  export interface Tensor {
+    data: BigInt64Array
+    dims: number[]
+    type: string
+    size: number
+  }
+
   export interface EncodedTokens {
-    input_ids: {
-      data: BigInt64Array | number[]
-    }
-    attention_mask?: {
-      data: BigInt64Array | number[]
-    }
+    input_ids: Tensor
+    attention_mask?: Tensor
   }
 
   /**
@@ -146,7 +149,7 @@ export interface ModelWorkerAPI {
    */
   export interface TokenizerInterface {
     (text: string, options: TokenizerOptions): Promise<EncodedTokens>
-    decode(ids: number[], options?: DecodeOptions): string
+    decode(ids: number[] | bigint[], options?: DecodeOptions): string
   }
 
   /**
@@ -166,7 +169,7 @@ export interface ModelWorkerAPI {
    * Single generation output from the pipeline.
    */
   export interface GenerationOutput {
-    generated_text?: string
+    generated_text: string  // not optional - always present in output
   }
 
   /**
