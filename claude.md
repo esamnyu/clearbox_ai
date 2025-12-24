@@ -1,5 +1,46 @@
 # Claude Code Guidelines
 
+## Project Summary
+
+**NeuroScope-Web**: Browser-based mechanistic interpretability toolkit for GPT-2.
+Combines transformers.js inference (500MB model) with React visualization.
+
+**Research Goals:**
+- Attention pattern analysis (induction heads, pattern classification)
+- Steering vectors (sentiment manipulation, refusal bypass)
+- Adversarial attacks (GCG-style genetic search)
+
+## Key Locations
+
+| Path | Purpose |
+|------|---------|
+| `src/engine/worker.ts` | Web Worker — model loading, tokenization, generation |
+| `src/engine/types.ts` | All shared interfaces (PipelineFactory, TokenizerInterface, etc.) |
+| `src/analysis/` | Researcher workspace — pure tensor math functions |
+| `tests/fixtures/` | Mock infrastructure (mockPipelineFactory, mockTokenizer) |
+| `docs/TESTING_STRATEGY.md` | Test architecture and pseudocode |
+| `docs/ARCHITECTURE.md` | Full system design |
+
+## Current Status
+
+**Phase 1: Testing Infrastructure** — Complete
+- Pipeline abstraction interfaces defined
+- Mock fixtures implemented
+- Dependency injection in worker.ts
+- 12 tests passing (`npm run test`)
+
+**Next:** Feature development (hidden state extraction, attention visualization)
+
+## Test Commands
+
+```bash
+npm run test        # Run all tests
+npm run test:watch  # Watch mode
+npm run dev         # Start app at localhost:3001
+```
+
+---
+
 ## Role & Persona
 
 Act as a **Senior Software Architect and Mentor**. Your goal is to help me understand the engineering and "why" behind decisions, not just to solve the problem for me.
