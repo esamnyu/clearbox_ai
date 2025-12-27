@@ -32,7 +32,16 @@
  */
 
 import * as Comlink from 'comlink';
-import { pipeline, env, type TextGenerationPipeline } from '@huggingface/transformers';
+// import { pipeline, env, type TextGenerationPipeline } from '@huggingface/transformers';
+import {
+  env,
+  pipeline,
+  AutoTokenizer,
+  GPT2LMHeadModel,
+  PreTrainedTokenizer,
+  PreTrainedModel,
+  Tensor,
+} from '@huggingface/transformers';
 import type {
   ModelWorkerAPI,
   ModelId,
@@ -104,16 +113,21 @@ function resetPipelineFactory(): void {
 // WORKER STATE
 // ============================================================================
 
-/**
- * Current loaded model instance.
- * The TextGenerationPipeline provides both generation and tokenization APIs.
- */
-let currentModel: TextGenerationPipeline | null = null;
+// /**
+//  * Current loaded model instance.
+//  * The TextGenerationPipeline provides both generation and tokenization APIs.
+//  */
+// let currentModel: TextGenerationPipeline | null = null;
 
-/** Currently loaded model identifier (e.g., 'Xenova/gpt2') */
+// /** Currently loaded model identifier (e.g., 'Xenova/gpt2') */
+// let currentModelId: ModelId | null = null;
+
+// /** Current worker state for external status queries */
+// let currentStatus: ModelStatus = 'idle';
+
+let tokenizer: PreTrainedTokenizer | null = null;
+let model: PreTrainedModel | null = null;
 let currentModelId: ModelId | null = null;
-
-/** Current worker state for external status queries */
 let currentStatus: ModelStatus = 'idle';
 
 // ============================================================================
@@ -135,7 +149,7 @@ const workerAPI: ModelWorkerAPI = {
     modelId: ModelId,
     onProgress?: (progress: LoadProgress) => void
   ): Promise<void> {
-    if (currentModel && currentModelId === modelId) {
+    if (model && currentModelId === modelId) {
       console.log(`Model ${modelId} already loaded`);
       return;
     }
@@ -143,11 +157,15 @@ const workerAPI: ModelWorkerAPI = {
     try {
       currentStatus = 'loading';
 
-      console.log(`Loading model: ${modelId} (Full Precision)`);
+      console.log(`Loading raw model: ${modelId} (Full Precision)`);
 
-      // Create the pipeline with progress callback (uses injected factory)
-      currentModel = await currentPipelineFactory.create('text-generation', modelId, {
-        dtype: "fp32",
+      // load tokenizer
+      tokenizer = await AutoTokenizer.from_pretrained(modelId);
+
+      // load model (GPT2LMHeadModel)
+      // we load the actual model class, not a pipeline wrapper
+      model = await GPT2LMHeadModel.from_pretrained(modelId, {
+        dtype: 'fp32', // full precision for accurate gradients/analysis
         device: 'wasm',
         progress_callback: (progress) => {
           if (onProgress) {
@@ -157,20 +175,17 @@ const workerAPI: ModelWorkerAPI = {
               progress: progress.progress,
               loaded: progress.loaded,
               total: progress.total,
-            });
+            })
           }
-          console.log(`[${modelId}] ${progress.status}: ${progress.file ?? ''} ${progress.progress?.toFixed(1) ?? ''}%`);
-        },
-      }) as unknown as TextGenerationPipeline;
+        }
+      })
 
       currentModelId = modelId;
       currentStatus = 'ready';
-      console.log(`Model ${modelId} loaded successfully`);
+      console.log(`Interpretability Model ${modelId} loaded successfully`);
 
     } catch (error) {
       currentStatus = 'error';
-      currentModel = null;
-      currentModelId = null;
       console.error('Failed to load model:', error);
       throw error;
     }
