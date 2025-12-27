@@ -195,7 +195,12 @@ const workerAPI: ModelWorkerAPI = {
    * Unload the current model to free memory.
    */
   async unloadModel(): Promise<void> {
-    currentModel = null;
+    if (model) {
+      // manual cleanup but garbage collector should handel most of this
+      model.dispose();
+      model = null;
+    }
+    tokenizer = null;
     currentModelId = null;
     currentStatus = 'idle';
     console.log('Model unloaded');
