@@ -223,9 +223,7 @@ const workerAPI: ModelWorkerAPI = {
    * @returns Tokens, token IDs, and attention mask
    */
   async tokenize(text: string): Promise<TokenizationResult> {
-    if (!currentModel) {
-      throw new Error('No model loaded. Call loadModel first.');
-    }
+    if (!tokenizer) throw new Error('Model not loaded. Call LoadModel first');
 
     // Access the tokenizer from the pipeline
     const tokenizer = currentModel.tokenizer;
@@ -286,73 +284,58 @@ const workerAPI: ModelWorkerAPI = {
     prompt: string,
     options: GenerateOptions = {}
   ): Promise<GenerationResult> {
-    if (!currentModel) {
-      throw new Error('No model loaded. Call loadModel first.');
-    }
+    if (!model || !tokenizer) throw new Error('Model not loaded.');
 
     const {
       maxNewTokens = 20,
       temperature = 1.0,
-      topK = 50,
-      topP = 0.95,
-      outputHiddenStates = false,
-      outputAttentions = false,
+      outputHiddenStates = true,
+      outputAttentions = true,
     } = options;
 
-    try {
-      // Generate with the pipeline
-      const output = await currentModel(prompt, {
-        max_new_tokens: maxNewTokens,
-        temperature,
-        top_k: topK,
-        top_p: topP,
-        do_sample: temperature > 0,
-        // Note: output_hidden_states and output_attentions may not be
-        // fully supported in all transformers.js versions
-        return_full_text: true,
-      });
+    const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
 
-      /**
-       * Extract the generated text from pipeline output.
-       *
-       * The output structure from transformers.js can vary depending on version
-       * and configuration. We safely handle both array and object formats:
-       * - Array format: [{ generated_text: "..." }, ...]
-       * - Direct format: { generated_text: "..." }
-       */
-      const firstResult = Array.isArray(output) ? output[0] : output;
-      const generatedText = 'generated_text' in firstResult
-        ? String(firstResult.generated_text)
-        : String(firstResult);
+    // running inference here...
+    // We use return_dict_in_generate to get the full telemetry object
+    const output = await model.generate({
+      ...inputs,
+      max_new_tokens: maxNewTokens,
+      temperature,
+      do_sample: temperature > 0,
+      return_dict_in_generate: true, // this forces a return object instead of just tokens
+      output_attentions: outputAttentions,
+      output_hidden_states: outputHiddenStates,
+    });
 
-      // Tokenize the full output for display
-      const tokenization = await this.tokenize(generatedText);
+    const generatedIds = output.sequences;
+    const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
 
-      const result: GenerationResult = {
-        text: generatedText,
-        tokens: tokenization.tokens,
-        tokenIds: tokenization.tokenIds,
+    // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
+    // NOTE: this extracts data for the generated tokens.
+    // Structure: output.attentions[token_index][layer_index] -> Tensor
+
+    let extractedAttentions: any = null;
+    let extractedHiddenStates: any = null;
+
+    if (outputAttentions && output.attentions) {
+      // example extraction logic: extract attention from the last generated token, last layer
+      // in the real app, we would flatten and transfer these buffers
+      console.log('Captured ${output.attentions.length} steps of attention');
+      extractedAttentions = {
+        layers: output.attentions[0].length,
+        steps: output.attentions.length,
+        // add more extraction logic here
+        info: "Check console in worker for raw tensors"
       };
-
-      // RESEARCHER TODO: Hidden state extraction
-      // Currently, transformers.js doesn't expose hidden states easily.
-      // This is where we would extract them if available.
-      if (outputHiddenStates) {
-        console.warn('Hidden state extraction not yet implemented');
-        // result.hiddenStates = extractHiddenStates(output);
-      }
-
-      if (outputAttentions) {
-        console.warn('Attention extraction not yet implemented');
-        // result.attentions = extractAttentions(output);
-      }
-
-      return result;
-
-    } catch (error) {
-      console.error('Generation failed:', error);
-      throw error;
     }
+    
+    return {
+      text: generatedText,
+      tokens: [], 
+      tokenIds: Array.from(generatedIds[0].data as BigInt64Array).map(Number),
+      attentions: extractedAttentions,
+      hiddenStates: extractedHiddenStates,
+    };
   },
 };
 
