@@ -182,7 +182,7 @@ const workerAPI: ModelWorkerAPI = {
 
       currentModelId = modelId;
       currentStatus = 'ready';
-      console.log(`Interpretability Model ${modelId} loaded successfully`);
+      console.log(`Model ${modelId} loaded for interpretability`);
 
     } catch (error) {
       currentStatus = 'error';
@@ -225,47 +225,29 @@ const workerAPI: ModelWorkerAPI = {
   async tokenize(text: string): Promise<TokenizationResult> {
     if (!tokenizer) throw new Error('Model not loaded. Call LoadModel first');
 
-    // Access the tokenizer from the pipeline
-    const tokenizer = currentModel.tokenizer;
 
     // Tokenize the input (tokensizer returns bigints in transformers v3)
     const encoded = await tokenizer(text, {
-      return_tensors: 'art', // explicit use of 'art' for onnx runtime
+      return_tensors: 'pt', 
       padding: false,
       truncation: false,
     });
 
     // need to convert bigint IDs to number IDs
-    const tensorData = encoded.input_ids.data;
-    const tokenIds: number[] = Array.from(tensorData).map((x) => Number(x));
-    console.log('Token IDs:', tokenIds);
-    console.log('Raw Tensor Data:', tensorData);
+    // const tensorData = encoded.input_ids.data;
+    // const tokenIds: number[] = Array.from(tensorData).map((x) => Number(x));
+    // console.log('Token IDs:', tokenIds);
+    // console.log('Raw Tensor Data:', tensorData);
+    const inputIdsTensor = encoded.input_ids;
+    const tokenIds: number[] = Array.from(inputIdsTensor.data as BigInt64Array).map(Number);
 
-    // handle attention masks if present and cast to number[]
-    let attentionMask: number[] = [];
-    if (encoded.attention_mask) {
-      const maskData = encoded.attention_mask.data;
-      attentionMask = Array.from(maskData).map((x) => Number(x));
-      console.log('Attention Mask:', attentionMask);
-    } else {
-      // if no attention mask, fallback to all ones
-      attentionMask = tokenIds.map(() => 1);
-    }
-
-    // Get token strings by decoding each token ID individually
-    // const tokenIds: number[] = encoded.input_ids;
-    const tokens: string[] = [];
-
-    for (const id of tokenIds) {
-      const decoded = tokenizer.decode([id], { skip_special_tokens: false });
-      tokens.push(decoded);
-    }
+    const tokens = tokenIds.map(id => tokenizer!.decode([id]));
     console.log('Tokens:', tokens);
 
     return {
       tokens,
       tokenIds,
-      attentionMask,
+      attentionMask: Array.from(encoded.attention_mask.data as BigInt64Array).map(Number),
     };
   },
 
@@ -287,7 +269,7 @@ const workerAPI: ModelWorkerAPI = {
     if (!model || !tokenizer) throw new Error('Model not loaded.');
 
     const {
-      maxNewTokens = 20,
+      maxNewTokens = 10,
       temperature = 1.0,
       outputHiddenStates = true,
       outputAttentions = true,
@@ -307,7 +289,7 @@ const workerAPI: ModelWorkerAPI = {
       output_hidden_states: outputHiddenStates,
     });
 
-    const generatedIds = output.sequences;
+    const generatedIds = output.sequences; // unsure that sequences is present in ModelOutput
     const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
 
     // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
@@ -320,12 +302,12 @@ const workerAPI: ModelWorkerAPI = {
     if (outputAttentions && output.attentions) {
       // example extraction logic: extract attention from the last generated token, last layer
       // in the real app, we would flatten and transfer these buffers
-      console.log('Captured ${output.attentions.length} steps of attention');
+      console.log(`[Worker] Captured ${output.attentions.length} steps of attention`);
       extractedAttentions = {
         layers: output.attentions[0].length,
         steps: output.attentions.length,
         // add more extraction logic here
-        info: "Check console in worker for raw tensors"
+        info: "Raw tensors held in worker memory - see console logs"
       };
     }
     
@@ -334,7 +316,7 @@ const workerAPI: ModelWorkerAPI = {
       tokens: [], 
       tokenIds: Array.from(generatedIds[0].data as BigInt64Array).map(Number),
       attentions: extractedAttentions,
-      hiddenStates: extractedHiddenStates,
+      hiddenStates: extractedHiddenStates, // placeholder
     };
   },
 };
