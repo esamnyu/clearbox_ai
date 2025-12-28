@@ -262,72 +262,173 @@ const workerAPI: ModelWorkerAPI = {
    * Shape of hidden_states[layer]: [batch, seq_len, hidden_dim]
    * Shape of attentions[layer]: [batch, num_heads, seq_len, seq_len]
    */
+//   async generate(
+//     prompt: string,
+//     options: GenerateOptions = {}
+//   ): Promise<GenerationResult> {
+//     if (!model || !tokenizer) throw new Error('Model not loaded.');
+
+//     const {
+//       maxNewTokens = 10,
+//       temperature = 1.0,
+//       outputHiddenStates = true,
+//       outputAttentions = true,
+//     } = options;
+
+//     const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
+
+//     // running inference here...
+//     // We use return_dict_in_generate to get the full telemetry object
+//     const output = await model.generate({
+//       ...inputs,
+//       max_new_tokens: maxNewTokens,
+//       temperature,
+//       do_sample: temperature > 0,
+//       return_dict_in_generate: true, // this forces a return object instead of just tokens
+//       output_attentions: outputAttentions,
+//       output_hidden_states: outputHiddenStates,
+//     });
+
+//     const generatedIds = output.sequences; // unsure that sequences is present in ModelOutput
+//     const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
+//     console.log('generatedText:', generatedText);
+
+//     // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
+//     // NOTE: this extracts data for the generated tokens.
+//     // Structure: output.attentions[token_index][layer_index] -> Tensor
+
+//     let extractedAttentions: any = null;
+//     let extractedHiddenStates: any = null;
+
+//     console.log('[Worker] Extracting internal model states for analysis');
+//     console.log('Full output class:', output);
+//     console.log('Output keys:', Object.keys(output));
+//     console.log('Attentions:', output.attentions);
+//     console.log('Hidden States:', output.hidden_states);
+
+
+//     if (outputAttentions && output.attentions) {
+//       // example extraction logic: extract attention from the last generated token, last layer
+//       // in the real app, we would flatten and transfer these buffers
+//       console.log(`[Worker] Captured ${output.attentions.length} steps of attention`);
+//       extractedAttentions = {
+//         layers: output.attentions[0].length,
+//         steps: output.attentions.length,
+//         // add more extraction logic here
+//         info: "Raw tensors held in worker memory - see console logs"
+//       };
+//     }
+    
+//     return {
+//       text: generatedText,
+//       tokens: [], 
+//       tokenIds: Array.from(generatedIds[0].data as BigInt64Array).map(Number),
+//       attentions: extractedAttentions,
+//       hiddenStates: extractedHiddenStates, // placeholder
+//     };
+//   },
+// };
+
   async generate(
     prompt: string,
-    options: GenerateOptions = {}
+    options: GenerateOptions = {}  
   ): Promise<GenerationResult> {
     if (!model || !tokenizer) throw new Error('Model not loaded.');
 
     const {
       maxNewTokens = 10,
-      temperature = 1.0,
       outputHiddenStates = true,
       outputAttentions = true,
     } = options;
 
+    // Tokenize input
     const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
+    let currentTokenIds = inputs.input_ids; // Tensor of shape [1, seq_len]
 
-    // running inference here...
-    // We use return_dict_in_generate to get the full telemetry object
-    const output = await model.generate({
-      ...inputs,
-      max_new_tokens: maxNewTokens,
-      temperature,
-      do_sample: temperature > 0,
-      return_dict_in_generate: true, // this forces a return object instead of just tokens
-      output_attentions: outputAttentions,
-      output_hidden_states: outputHiddenStates,
-    });
+    // telemtry storage
+    const collectedAttentions: any[] = [];
+    const collectedHiddenStates: any[] = [];
+    const newTokens: number[] = [];
 
-    const generatedIds = output.sequences; // unsure that sequences is present in ModelOutput
-    const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
-    console.log('generatedText:', generatedText);
+    console.log('[Worker] Starting Manual Autoregressive Loop...');
 
-    // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
-    // NOTE: this extracts data for the generated tokens.
-    // Structure: output.attentions[token_index][layer_index] -> Tensor
+    for (let i = 0; i < maxNewTokens; i++) {
+      // Forward pass
+      // We will specifically request telemetry for this specific pass
+      const output = await model(currentTokenIds, {
+        output_attentions: outputAttentions,
+        output_hidden_states: outputHiddenStates,
+        return_dict: true,
+      });
 
-    let extractedAttentions: any = null;
-    let extractedHiddenStates: any = null;
+      // extraction
+      // output.attentions is an array of Tensors: [layer_0, layer_1, ..., layer_N]
+      if (outputAttentions && output.attentions) {
+        // Storing the struct to show that it works, some cases we would only want the last token attention but here we want it all.
+        collectedAttentions.push({
+          step: i,
+          layers: output.attentions.length // should slice the tensor here to save memory
+        });
+      }
 
-    console.log('[Worker] Extracting internal model states for analysis');
-    console.log('Full output class:', output);
-    console.log('Output keys:', Object.keys(output));
-    console.log('Attentions:', output.attentions);
-    console.log('Hidden States:', output.hidden_states);
+      if (outputHiddenStates && output.hidden_states) {
+        collectedHiddenStates.push({
+          step: i,
+          layers: output.hidden_states.length // should slice the tensor here to save memory
+        });
+      }
 
+      // greedy decoding: selecting next token
+      // Logits shape: [batch, seq_len, vocab_size]
+      const logits = output.logits;
 
-    if (outputAttentions && output.attentions) {
-      // example extraction logic: extract attention from the last generated token, last layer
-      // in the real app, we would flatten and transfer these buffers
-      console.log(`[Worker] Captured ${output.attentions.length} steps of attention`);
-      extractedAttentions = {
-        layers: output.attentions[0].length,
-        steps: output.attentions.length,
-        // add more extraction logic here
-        info: "Raw tensors held in worker memory - see console logs"
-      };
+      // grabbing logits for the last toke, need to handle the tensor data manually
+      const [batchSize, seqLen, vocabSize] = logits.dims;
+      const data = logits.data as Float32Array; // assuming fp32
+
+      // calc offset for last token vocab distribution
+      const lastIdx = (seqLen - 1) * vocabSize;
+      const lastLogits = data.slice(lastIdx, lastIdx + vocabSize);
+
+      // argmax greedy search
+      let maxLogit = -Infinity;
+      let nextTokenId = 0;
+      for (let j = 0; j < lastLogits.length; j++) {
+        if (lastLogits[j] > maxLogit) {
+          maxLogit = lastLogits[j];
+          nextTokenId = j;
+        }
+      }
+
+      // update for next iteration
+      newTokens.push(nextTokenId);
+
+      // append new token to input (re create tensor)
+      // NOTE: In production, use KV-caching (past_key_values) for speed. 
+      // This method (re-running full context) is slower but easier to debug for interpretability.
+      const currentIdsArray = Array.from(currentTokenIds.data as BigInt64Array).map(Number);
+      currentIdsArray.push(nextTokenId);
+
+      // create new tensor for next pass
+      currentTokenIds = new Tensor(
+        'int64',
+        BigInt64Array.from(currentIdsArray.map(BigInt)),
+        [1, currentIdsArray.length]
+      );
     }
-    
+
+    // Decode generated token IDs to text
+    const generatedText = tokenizer.decode(newTokens, { skip_special_tokens: true });
+    console.log('[Worker] Loop finished. Captured ${collectedAttentions.length} attention steps.');
+
     return {
-      text: generatedText,
-      tokens: [], 
-      tokenIds: Array.from(generatedIds[0].data as BigInt64Array).map(Number),
-      attentions: extractedAttentions,
-      hiddenStates: extractedHiddenStates, // placeholder
+      text: generatedText, // this will be just the NEW text
+      tokens: newTokens.map(id => tokenizer!.decode([id])),
+      tokenIds: newTokens,
+      attentions: collectedAttentions,
+      hiddenStates: collectedHiddenStates,
     };
-  },
-};
+  }
 
 // ============================================================================
 // TEST UTILITIES (only used in test environment)
