@@ -34,7 +34,7 @@
 
 import { create } from 'zustand';
 import * as Comlink from 'comlink';
-import type { ModelWorkerAPI, ModelStatus, ModelId, TokenizationResult, LoadProgress } from '../engine/types';
+import type { ModelWorkerAPI, ModelStatus, ModelId, TokenizationResult, LoadProgress, GenerationResult } from '../engine/types';
 
 /**
  * Shape of the model store state and actions.
@@ -78,6 +78,9 @@ interface ModelState {
 
   /** Tokenize text using the loaded model. Updates tokens/tokenIds state. */
   tokenize: (text: string) => Promise<TokenizationResult>;
+
+  /** Generate text using the loaded model. Updates generation state. */
+  generate: (prompt: string) => Promise<GenerationResult>;
 
   /** Reset error state to allow retry. Clears error and sets status to 'idle'. */
   reset: () => void;
@@ -161,6 +164,19 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const result = await worker.tokenize(text);
     set({ tokens: result.tokens, tokenIds: result.tokenIds });
     return result;
+  },
+
+  generate: async (prompt: string) => {
+    const { worker, status } = get();
+    if (!worker || status !== 'ready') {
+      throw new Error('Worker not initialized or model not ready');
+    }
+
+    return await worker.generate(prompt, {
+      maxNewTokens: 10,
+      outputHiddenStates: true,
+      outputAttentions: true
+    });
   },
 
   /**
