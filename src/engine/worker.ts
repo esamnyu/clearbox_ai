@@ -291,6 +291,7 @@ const workerAPI: ModelWorkerAPI = {
 
     const generatedIds = output.sequences; // unsure that sequences is present in ModelOutput
     const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
+    console.log('generatedText:', generatedText);
 
     // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
     // NOTE: this extracts data for the generated tokens.
@@ -298,6 +299,13 @@ const workerAPI: ModelWorkerAPI = {
 
     let extractedAttentions: any = null;
     let extractedHiddenStates: any = null;
+
+    console.log('[Worker] Extracting internal model states for analysis');
+    console.log('Full output class:', output);
+    console.log('Output keys:', Object.keys(output));
+    console.log('Attentions:', output.attentions);
+    console.log('Hidden States:', output.hidden_states);
+
 
     if (outputAttentions && output.attentions) {
       // example extraction logic: extract attention from the last generated token, last layer
