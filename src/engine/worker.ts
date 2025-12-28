@@ -343,7 +343,11 @@ const workerAPI: ModelWorkerAPI = {
 
     // Tokenize input
     const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
-    let currentTokenIds = inputs.input_ids; // Tensor of shape [1, seq_len]
+
+    // let currentTokenIds = inputs.input_ids; // Tensor of shape [1, seq_len]
+    // Convert BigInt64Array to standard arrays for easy manipulation in the loop
+    let currentInputIds = Array.from(inputs.input_ids.data as BigInt64Array).map(Number);
+    let currentAttentionMask = Array.from(inputs.attention_mask.data as BigInt64Array).map(Number);
 
     // telemtry storage
     const collectedAttentions: any[] = [];
@@ -355,7 +359,24 @@ const workerAPI: ModelWorkerAPI = {
     for (let i = 0; i < maxNewTokens; i++) {
       // Forward pass
       // We will specifically request telemetry for this specific pass
-      const output = await model(currentTokenIds, {
+      // Re-create Tensors for this step (Transformers.js expects BigInt64Array for 'int64')
+      const inputTensor = new Tensor(
+        'int64',
+        BigInt64Array.from(currentInputIds.map(BigInt)),
+        [1, currentInputIds.length]
+      );
+
+      const maskTensor = new Tensor(
+        'int64',
+        BigInt64Array.from(currentAttentionMask.map(BigInt)),
+        [1, currentAttentionMask.length]
+      );
+
+
+      const output = await model({
+        input_ids: inputTensor,
+        attention_mask: maskTensor,
+      }, {
         output_attentions: outputAttentions,
         output_hidden_states: outputHiddenStates,
         return_dict: true,
@@ -367,7 +388,8 @@ const workerAPI: ModelWorkerAPI = {
         // Storing the struct to show that it works, some cases we would only want the last token attention but here we want it all.
         collectedAttentions.push({
           step: i,
-          layers: output.attentions.length // should slice the tensor here to save memory
+          layers: output.attentions.length, // should slice the tensor here to save memory
+          heads: output.attentions[0].dims[1]
         });
       }
 
@@ -406,29 +428,26 @@ const workerAPI: ModelWorkerAPI = {
       // append new token to input (re create tensor)
       // NOTE: In production, use KV-caching (past_key_values) for speed. 
       // This method (re-running full context) is slower but easier to debug for interpretability.
-      const currentIdsArray = Array.from(currentTokenIds.data as BigInt64Array).map(Number);
-      currentIdsArray.push(nextTokenId);
+      newTokens.push(nextTokenId);
+      currentInputIds.push(nextTokenId);
+      currentAttentionMask.push(1); // assume all tokens are valid
 
-      // create new tensor for next pass
-      currentTokenIds = new Tensor(
-        'int64',
-        BigInt64Array.from(currentIdsArray.map(BigInt)),
-        [1, currentIdsArray.length]
-      );
+      console.log(`[Worker] Generated token ${i + 1}/${maxNewTokens}: ID ${nextTokenId}`);
     }
 
     // Decode generated token IDs to text
     const generatedText = tokenizer.decode(newTokens, { skip_special_tokens: true });
-    console.log('[Worker] Loop finished. Captured ${collectedAttentions.length} attention steps.');
+    console.log(`[Worker] Loop finished. Captured ${collectedAttentions.length} attention steps.`);
 
     return {
       text: generatedText, // this will be just the NEW text
-      tokens: newTokens.map(id => tokenizer!.decode([id])),
+      tokens: [],
       tokenIds: newTokens,
-      attentions: collectedAttentions,
-      hiddenStates: collectedHiddenStates,
+      attentions: collectedAttentions.length > 0 ? { steps: collectedAttentions } : null,
+      hiddenStates: collectedHiddenStates.length > 0 ? { steps: collectedHiddenStates } : null,
     };
-  }
+  },
+};
 
 // ============================================================================
 // TEST UTILITIES (only used in test environment)
