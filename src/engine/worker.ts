@@ -109,6 +109,48 @@ function resetPipelineFactory(): void {
   currentPipelineFactory = defaultPipelineFactory;
 }
 
+// helper to clean up the double token problem in greedy decoding 
+function sampleToken(logits: Float32Array, temperature: number): number {
+  // 1. Handle Temperature
+  // If temp is very low, fall back to Greedy (Argmax) for stability
+  if (temperature < 0.1) {
+    let maxLogit = -Infinity;
+    let maxIdx = 0;
+    for (let i = 0; i < logits.length; i++) {
+      if (logits[i] > maxLogit) {
+        maxLogit = logits[i];
+        maxIdx = i;
+      }
+    }
+    return maxIdx;
+  }
+
+  // 2. Apply Temperature & Numerical Stability
+  // We subtract maxLogit to prevent overflow during Math.exp()
+  let maxLogit = -Infinity;
+  for (let i = 0; i < logits.length; i++) {
+    if (logits[i] > maxLogit) maxLogit = logits[i];
+  }
+
+  const exps = new Float32Array(logits.length);
+  let sumExps = 0;
+  for (let i = 0; i < logits.length; i++) {
+    const val = Math.exp((logits[i] - maxLogit) / temperature);
+    exps[i] = val;
+    sumExps += val;
+  }
+
+  // 3. Multinomial Sampling (Cumulative Distribution)
+  let r = Math.random() * sumExps;
+  for (let i = 0; i < logits.length; i++) {
+    r -= exps[i];
+    if (r <= 0) return i;
+  }
+
+  // Fallback (should rarely reach here due to floating point precision)
+  return 0;
+}
+
 // ============================================================================
 // WORKER STATE
 // ============================================================================
@@ -337,6 +379,7 @@ const workerAPI: ModelWorkerAPI = {
 
     const {
       maxNewTokens = 10,
+      temperature = 0.7,
       outputHiddenStates = true,
       outputAttentions = true,
     } = options;
@@ -382,6 +425,11 @@ const workerAPI: ModelWorkerAPI = {
         return_dict: true,
       });
 
+      console.log('[DEBUG] Current attention mask:', currentAttentionMask);
+      console.log('[DEBUG] Output attentions:', output.attentions);
+      console.log('[DEBUG] Output hidden states:', output.hidden_states);
+      console.log('[DEBUG] Output logits:', output.logits);
+
       // extraction
       // output.attentions is an array of Tensors: [layer_0, layer_1, ..., layer_N]
       if (outputAttentions && output.attentions) {
@@ -412,15 +460,8 @@ const workerAPI: ModelWorkerAPI = {
       const lastIdx = (seqLen - 1) * vocabSize;
       const lastLogits = data.slice(lastIdx, lastIdx + vocabSize);
 
-      // argmax greedy search
-      let maxLogit = -Infinity;
-      let nextTokenId = 0;
-      for (let j = 0; j < lastLogits.length; j++) {
-        if (lastLogits[j] > maxLogit) {
-          maxLogit = lastLogits[j];
-          nextTokenId = j;
-        }
-      }
+     // using sample helper here to handle temperature and sampling
+      const nextTokenId = sampleToken(lastLogits, temperature);
 
       // update for next iteration
       newTokens.push(nextTokenId);
@@ -433,6 +474,8 @@ const workerAPI: ModelWorkerAPI = {
       currentAttentionMask.push(1); // assume all tokens are valid
 
       console.log(`[Worker] Generated token ${i + 1}/${maxNewTokens}: ID ${nextTokenId}`);
+      // Optional: Early stop on EOS token (50256 for GPT-2)
+      if (nextTokenId === 50256) break;
     }
 
     // Decode generated token IDs to text
