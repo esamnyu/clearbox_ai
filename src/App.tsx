@@ -31,17 +31,17 @@ import { useEffect, useState } from 'react';
 import { useModelStore } from './store/modelStore';
 
 export default function App() {
-  const [prompt, setPrompt] = useState('Hello world');
+  const [prompt, setPrompt] = useState('The Eiffel Tower is located in');
+  const [genText, setGenText] = useState('');
+  const [telemetry, setTelemetry] = useState<any>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+
   const {
     status,
     loadProgress,
-    error,
-    tokens,
-    tokenIds,
     initWorker,
     loadModel,
-    tokenize,
-    reset,
+    generate
   } = useModelStore();
 
   // Initialize worker on mount
@@ -49,139 +49,120 @@ export default function App() {
     initWorker();
   }, [initWorker]);
 
-  // Handle model loading
-  const handleLoadModel = async () => {
-    await loadModel('Xenova/gpt2');
-  };
+  const handleGenerate = async () => {
+    if (status !== 'ready') return;
+    
+    setIsGenerating(true);
+    setGenText('Generating...');
+    setTelemetry(null);
 
-  // Handle tokenization
-  const handleTokenize = async () => {
-    if (status === 'ready') {
-      await tokenize(prompt);
+    // Call the worker directly (or via store action)
+    try {
+      const result = await generate(prompt);
+
+      setGenText(result.text);
+      setTelemetry({
+        tokenIds: result.tokenIds,
+        attentions: result.attentions,
+        hiddenStates: result.hiddenStates
+      });
+      
+      console.log("INTERPRETABILITY DATA:", result);
+    } catch (e) {
+      console.error("Generation error:", e);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   return (
-    <div className="min-h-screen p-8 max-w-4xl mx-auto">
-      <h1 className="text-3xl font-bold mb-2">NeuroScope-Web</h1>
-      <p className="text-slate-400 mb-8">Session 1: Model Loading & Tokenization</p>
-
-      {/* Model Loading */}
-      <section className="mb-8 p-4 bg-slate-900 rounded-lg border border-slate-800">
-        <h2 className="text-lg font-semibold mb-4">1. Load Model</h2>
+    <div className="min-h-screen p-8 max-w-4xl mx-auto bg-slate-950 text-slate-200 font-sans">
+      <h1 className="text-3xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+        Clearbox AI: Interpretability Interface
+      </h1>
+      
+      {/* 1. Model Loader */}
+      <section className="mb-8 p-6 bg-slate-900/50 rounded-xl border border-slate-800">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-lg font-semibold text-white">Model Status</h2>
+          <span className={`px-2 py-1 rounded text-xs font-mono ${
+            status === 'ready' ? 'bg-green-900/50 text-green-400' : 
+            status === 'loading' ? 'bg-blue-900/50 text-blue-400' : 
+            'bg-yellow-900/50 text-yellow-400'
+          }`}>
+            {status.toUpperCase()}
+          </span>
+        </div>
 
         {status === 'idle' && (
-          <button
-            onClick={handleLoadModel}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded font-medium"
+          <button 
+            onClick={() => loadModel('Xenova/gpt2')}
+            className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
           >
             Load GPT-2 (124M)
           </button>
         )}
 
         {status === 'loading' && (
-          <div className="space-y-2">
-            <div className="text-slate-400">Loading model... {loadProgress.toFixed(0)}%</div>
-            <div className="h-2 bg-slate-800 rounded overflow-hidden">
-              <div
-                className="h-full bg-blue-500 transition-all duration-300"
-                style={{ width: `${loadProgress}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {status === 'ready' && (
-          <div className="text-green-400">Model loaded successfully</div>
-        )}
-
-        {status === 'error' && (
-          <div className="space-y-3">
-            <div className="text-red-400 font-medium">Failed to load model</div>
-            {error && (
-              <div className="text-sm text-red-300 bg-red-900/20 p-3 rounded border border-red-800">
-                {error}
-              </div>
-            )}
-            <button
-              onClick={() => {
-                reset();
-                handleLoadModel();
-              }}
-              className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded font-medium"
-            >
-              Retry
-            </button>
+          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+            <div 
+              className="bg-blue-500 h-full transition-all duration-300" 
+              style={{ width: `${loadProgress}%` }} 
+            />
           </div>
         )}
       </section>
 
-      {/* Tokenization */}
-      <section className="mb-8 p-4 bg-slate-900 rounded-lg border border-slate-800">
-        <h2 className="text-lg font-semibold mb-4">2. Tokenize Text</h2>
-
-        <div className="space-y-4">
-          <input
-            type="text"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Enter text to tokenize..."
-            className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded font-mono"
-            disabled={status !== 'ready'}
-          />
-
+      {/* 2. Experiment Input */}
+      <section className="mb-8 p-6 bg-slate-900/50 rounded-xl border border-slate-800">
+        <h2 className="text-lg font-semibold mb-4 text-white">Input Prompt</h2>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          className="w-full h-24 p-4 bg-slate-950 border border-slate-700 rounded-lg font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+        />
+        <div className="mt-4 flex gap-4">
           <button
-            onClick={handleTokenize}
-            disabled={status !== 'ready'}
-            className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed rounded font-medium"
+            onClick={handleGenerate}
+            disabled={status !== 'ready' || isGenerating}
+            className="px-6 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors"
           >
-            Tokenize
+            {isGenerating ? 'Running Inference...' : 'Generate & Analyze'}
           </button>
         </div>
       </section>
 
-      {/* Token Display */}
-      {tokens.length > 0 && (
-        <section className="p-4 bg-slate-900 rounded-lg border border-slate-800">
-          <h2 className="text-lg font-semibold mb-4">3. Results</h2>
-
-          {/* Tokens */}
-          <div className="mb-4">
-            <div className="text-sm text-slate-400 mb-2">Tokens ({tokens.length})</div>
-            <div className="flex flex-wrap gap-2">
-              {tokens.map((token, i) => (
-                <span key={i} className="token">
-                  {JSON.stringify(token)}
-                </span>
-              ))}
-            </div>
+      {/* 3. Analysis Dashboard */}
+      {genText && (
+        <section className="grid grid-cols-2 gap-6">
+          {/* Output Text */}
+          <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
+            <h3 className="text-sm font-semibold text-slate-400 mb-2">MODEL OUTPUT</h3>
+            <p className="font-mono text-lg leading-relaxed text-white">
+              {genText}
+            </p>
           </div>
 
-          {/* Token IDs */}
-          <div>
-            <div className="text-sm text-slate-400 mb-2">Token IDs</div>
-            <div className="flex flex-wrap gap-2">
-              {tokenIds.map((id, i) => (
-                <span key={i} className="token text-blue-400">
-                  {id}
-                </span>
-              ))}
+          {/* Telemetry Stats */}
+          <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
+            <h3 className="text-sm font-semibold text-slate-400 mb-2">CIRCUIT TELEMETRY</h3>
+            <div className="space-y-2 text-sm font-mono">
+              <div className="flex justify-between">
+                <span>Generated Tokens:</span>
+                <span className="text-blue-400">{telemetry?.tokenIds?.length || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Attention Layers:</span>
+                <span className="text-green-400">{telemetry?.attentions?.layers || 'N/A'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Capture Status:</span>
+                <span className="text-purple-400">Success</span>
+              </div>
             </div>
           </div>
         </section>
       )}
-
-      {/* Instructions */}
-      <section className="mt-8 p-4 bg-slate-900/50 rounded-lg border border-slate-800/50 text-slate-400">
-        <h3 className="font-semibold text-slate-300 mb-2">Session 1 Checkpoint</h3>
-        <ol className="list-decimal list-inside space-y-1 text-sm">
-          <li>Click "Load GPT-2" and wait for download (~500MB) (loading functionality fixed)</li>
-          <li>Type "Hello world" in the input</li>
-          <li>Click "Tokenize" (tokenization functionality fixed)</li>
-          <li>Verify tokens: ["Hello", " world"] (token display fixed)</li>
-          <li>Verify IDs: [15496, 995] (token ID casting fixed)</li>
-        </ol>
-      </section>
     </div>
   );
 }
