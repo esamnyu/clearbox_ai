@@ -392,9 +392,9 @@ const workerAPI: ModelWorkerAPI = {
     let currentInputIds = Array.from(inputs.input_ids.data as BigInt64Array).map(Number);
     let currentAttentionMask = Array.from(inputs.attention_mask.data as BigInt64Array).map(Number);
 
-    // telemtry storage
-    const collectedAttentions: any[] = [];
-    const collectedHiddenStates: any[] = [];
+    // telemetry storage - these will hold the actual tensor data for analysis
+    const collectedAttentions: { data: Float32Array; shape: number[]; dtype: 'float32'; step: number; layer: number }[] = [];
+    const collectedHiddenStates: { data: Float32Array; shape: number[]; dtype: 'float32'; step: number; layer: number }[] = [];
     const newTokens: number[] = [];
 
     console.log('[Worker] Starting Manual Autoregressive Loop...');
@@ -430,22 +430,36 @@ const workerAPI: ModelWorkerAPI = {
       console.log('[DEBUG] Output hidden states:', output.hidden_states);
       console.log('[DEBUG] Output logits:', output.logits);
 
-      // extraction
-      // output.attentions is an array of Tensors: [layer_0, layer_1, ..., layer_N]
+      // extraction - pulling actual tensor data, not just metadata
+      // output.attentions is array of tensors: [layer_0, layer_1, ..., layer_11]
+      // each tensor shape: [batch, num_heads, seq, seq]
       if (outputAttentions && output.attentions) {
-        // Storing the struct to show that it works, some cases we would only want the last token attention but here we want it all.
-        collectedAttentions.push({
-          step: i,
-          layers: output.attentions.length, // should slice the tensor here to save memory
-          heads: output.attentions[0].dims[1]
-        });
+        for (let layer = 0; layer < output.attentions.length; layer++) {
+          const tensor = output.attentions[layer];
+          // convert to Float32Array so we can actually use it for analysis
+          collectedAttentions.push({
+            data: new Float32Array(tensor.data as Float32Array),
+            shape: tensor.dims,
+            dtype: 'float32' as const,
+            step: i,
+            layer
+          });
+        }
       }
 
+      // same thing for hidden states
+      // shape: [batch, seq, 768] for gpt2
       if (outputHiddenStates && output.hidden_states) {
-        collectedHiddenStates.push({
-          step: i,
-          layers: output.hidden_states.length // should slice the tensor here to save memory
-        });
+        for (let layer = 0; layer < output.hidden_states.length; layer++) {
+          const tensor = output.hidden_states[layer];
+          collectedHiddenStates.push({
+            data: new Float32Array(tensor.data as Float32Array),
+            shape: tensor.dims,
+            dtype: 'float32' as const,
+            step: i,
+            layer
+          });
+        }
       }
 
       // greedy decoding: selecting next token
@@ -467,9 +481,8 @@ const workerAPI: ModelWorkerAPI = {
       newTokens.push(nextTokenId);
 
       // append new token to input (re create tensor)
-      // NOTE: In production, use KV-caching (past_key_values) for speed. 
+      // NOTE: In production, use KV-caching (past_key_values) for speed.
       // This method (re-running full context) is slower but easier to debug for interpretability.
-      newTokens.push(nextTokenId);
       currentInputIds.push(nextTokenId);
       currentAttentionMask.push(1); // assume all tokens are valid
 
@@ -486,8 +499,9 @@ const workerAPI: ModelWorkerAPI = {
       text: generatedText, // this will be just the NEW text
       tokens: [],
       tokenIds: newTokens,
-      attentions: collectedAttentions.length > 0 ? { steps: collectedAttentions } : null,
-      hiddenStates: collectedHiddenStates.length > 0 ? { steps: collectedHiddenStates } : null,
+      // now returning actual tensor arrays instead of wrapped metadata
+      attentions: collectedAttentions.length > 0 ? collectedAttentions : undefined,
+      hiddenStates: collectedHiddenStates.length > 0 ? collectedHiddenStates : undefined,
     };
   },
 };
