@@ -29,11 +29,69 @@
 
 import { useEffect, useState } from 'react';
 import { useModelStore } from './store/modelStore';
+import type { TensorWithMetadata } from './engine/types';
+
+interface TelemetryData {
+  tokenIds: number[];
+  attentions?: TensorWithMetadata[];
+  hiddenStates?: TensorWithMetadata[];
+}
+
+// Compute stats from tensor arrays
+function computeTelemetryStats(telemetry: TelemetryData | null) {
+  if (!telemetry) {
+    return {
+      generatedTokens: 0,
+      attentionTensorCount: 0,
+      hiddenStateTensorCount: 0,
+      uniqueLayers: 0,
+      generationSteps: 0,
+      attentionDataSizeMB: 0,
+      hiddenStateDataSizeMB: 0,
+      totalDataSizeMB: 0
+    };
+  }
+
+  const attentionTensorCount = telemetry.attentions?.length || 0;
+  const hiddenStateTensorCount = telemetry.hiddenStates?.length || 0;
+
+  // Count unique layers across both tensor types
+  const attentionLayers = new Set(telemetry.attentions?.map(t => t.layer) || []);
+  const hiddenStateLayers = new Set(telemetry.hiddenStates?.map(t => t.layer) || []);
+  const allLayers = new Set([...attentionLayers, ...hiddenStateLayers]);
+  const uniqueLayers = allLayers.size;
+
+  // Count unique generation steps
+  const attentionSteps = new Set(telemetry.attentions?.map(t => t.step) || []);
+  const hiddenStateSteps = new Set(telemetry.hiddenStates?.map(t => t.step) || []);
+  const allSteps = new Set([...attentionSteps, ...hiddenStateSteps]);
+  const generationSteps = allSteps.size;
+
+  // Calculate total memory usage
+  const attentionDataSizeMB = telemetry.attentions
+    ? telemetry.attentions.reduce((sum, t) => sum + (t.data.byteLength / (1024 * 1024)), 0)
+    : 0;
+
+  const hiddenStateDataSizeMB = telemetry.hiddenStates
+    ? telemetry.hiddenStates.reduce((sum, t) => sum + (t.data.byteLength / (1024 * 1024)), 0)
+    : 0;
+
+  return {
+    generatedTokens: telemetry.tokenIds?.length || 0,
+    attentionTensorCount,
+    hiddenStateTensorCount,
+    uniqueLayers,
+    generationSteps,
+    attentionDataSizeMB: Number(attentionDataSizeMB.toFixed(2)),
+    hiddenStateDataSizeMB: Number(hiddenStateDataSizeMB.toFixed(2)),
+    totalDataSizeMB: Number((attentionDataSizeMB + hiddenStateDataSizeMB).toFixed(2))
+  };
+}
 
 export default function App() {
   const [prompt, setPrompt] = useState('The Eiffel Tower is located in');
   const [genText, setGenText] = useState('');
-  const [telemetry, setTelemetry] = useState<any>(null);
+  const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const {
@@ -147,18 +205,49 @@ export default function App() {
           <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
             <h3 className="text-sm font-semibold text-slate-400 mb-2">CIRCUIT TELEMETRY</h3>
             <div className="space-y-2 text-sm font-mono">
-              <div className="flex justify-between">
-                <span>Generated Tokens:</span>
-                <span className="text-blue-400">{telemetry?.tokenIds?.length || 0}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Attention Layers:</span>
-                <span className="text-green-400">{telemetry?.attentions?.layers || 'N/A'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Capture Status:</span>
-                <span className="text-purple-400">Success</span>
-              </div>
+              {(() => {
+                const stats = computeTelemetryStats(telemetry);
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span>Generated Tokens:</span>
+                      <span className="text-blue-400">{stats.generatedTokens}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Attention Tensors:</span>
+                      <span className="text-green-400">{stats.attentionTensorCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Hidden State Tensors:</span>
+                      <span className="text-purple-400">{stats.hiddenStateTensorCount}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Unique Layers:</span>
+                      <span className="text-yellow-400">{stats.uniqueLayers}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Generation Steps:</span>
+                      <span className="text-cyan-400">{stats.generationSteps}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Data Size:</span>
+                      <span className="text-pink-400">{stats.totalDataSizeMB} MB</span>
+                    </div>
+                    <div className="flex justify-between border-t border-slate-700 pt-2 mt-2">
+                      <span>Capture Status:</span>
+                      <span className={`${
+                        stats.attentionTensorCount > 0 || stats.hiddenStateTensorCount > 0
+                          ? 'text-green-400'
+                          : 'text-red-400'
+                      }`}>
+                        {stats.attentionTensorCount > 0 || stats.hiddenStateTensorCount > 0
+                          ? 'Success'
+                          : 'No Data'}
+                      </span>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </section>

@@ -59,6 +59,12 @@ export interface GenerateOptions {
   outputAttentions?: boolean;
 }
 
+/** Tensor with step and layer metadata for interpretability */
+export interface TensorWithMetadata extends SerializedTensor {
+  step: number;
+  layer: number;
+}
+
 /** Full generation result with internal states */
 export interface GenerationResult {
   /** Generated text */
@@ -68,9 +74,9 @@ export interface GenerationResult {
   /** All token IDs */
   tokenIds: number[];
   /** Hidden states per layer (if requested) */
-  hiddenStates?: SerializedTensor[];
+  hiddenStates?: TensorWithMetadata[];
   /** Attention weights per layer (if requested) */
-  attentions?: SerializedTensor[];
+  attentions?: TensorWithMetadata[];
   /** Final logits */
   logits?: SerializedTensor;
 }
