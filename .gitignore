@@ -39,3 +39,7 @@ public/models/*.onnx
 
 # Testing
 coverage/
+
+# Python stuff
+.venv/
+
