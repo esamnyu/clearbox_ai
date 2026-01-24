@@ -304,10 +304,12 @@ Pick 1-2 to start (can add more later):
 
 ## Next Steps
 
-1. **Moon + Ethan**: Review this proposal, fill in open questions
+1. **Moon + Ethan**: Review this proposal and the [Research Strategy](./RESEARCH_STRATEGY.md) document
 2. **Ethan**: Run model validation tests (TransformerLens + target behavior)
 3. **Moon**: Begin curating prompt pairs for target behavior
 4. **Reconvene**: Finalize decisions, assign first tasks
+
+> **📄 See Also:** [RESEARCH_STRATEGY.md](./RESEARCH_STRATEGY.md) — Deep research analysis with recommended answers to the open questions above, methodology details, dataset guidance, and a 4-week implementation roadmap.
 
 ---
 
