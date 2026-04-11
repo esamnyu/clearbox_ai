@@ -66,6 +66,14 @@ class SteeringRequest(BaseModel):
     layer: int = Field(default=6, ge=0, le=11, description="Layer for extraction")
 
 
+class SteeredGenerationRequest(BaseModel):
+    prompt: str
+    steering_vector: List[float]
+    alpha: float = Field(default=1.0, description="Steering strength")
+    layer: int = Field(default=6, ge=0, le=11)
+    max_new_tokens: int = Field(default=30, ge=1, le=100)
+
+
 # -----------------------------------------------------------------------------
 # Endpoints
 # -----------------------------------------------------------------------------
@@ -177,6 +185,24 @@ async def contrastive_pairs():
         "pairs": [{"positive": p, "negative": n} for p, n in pairs],
         "count": len(pairs),
     }
+
+
+@app.post("/generate-steered")
+async def generate_steered(req: SteeredGenerationRequest):
+    """
+    Generate text with a steering vector injected at a specific layer.
+    Returns both steered and baseline outputs for comparison.
+    """
+    try:
+        return research.generate_steered(
+            req.prompt,
+            req.steering_vector,
+            req.alpha,
+            req.layer,
+            req.max_new_tokens,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/pca-trajectories")

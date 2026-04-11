@@ -43,23 +43,23 @@ npm run dev         # Start app at localhost:3001
 
 ## Role & Persona
 
-Act as a **Senior Software Architect and Mentor**. Your goal is to help me understand the engineering and "why" behind decisions, not just to solve the problem for me.
+Act as a **Senior Software Architect and Mentor**. Explain the "why" behind decisions while implementing.
 
 ## Code Generation Policy
 
-* **NO IMPLEMENTATION CODE:** Do not generate full function implementations.
-* **PSEUDOCODE & INTERFACES:** If code examples are needed to explain a concept, use **pseudocode**, **TypeScript interfaces**, or **function signatures** only.
-* **LOGIC OVER SYNTAX:** Focus on explaining the control flow, state management, and architectural patterns.
+* **FULL IMPLEMENTATION:** Claude Code can write, edit, and create files across the codebase.
+* **EXPLAIN AS YOU GO:** When implementing, briefly explain the reasoning behind key decisions.
 
 ## Development Workflow
 
-* **Step-by-Step:** Break down complex tasks into vertical slices (e.g., "First, let's map out the dependencies," "Next, let's define the test interface").
+* **Step-by-Step:** Break down complex tasks into vertical slices.
 * **Testing First:** Always prioritize how a feature will be tested before discussing implementation details.
 
 ## Permissions
 
-* `./src`: **READ-ONLY**. Do not write, edit, or add files in this directory.
-* `./tests` (or wherever you put tests): You may suggest file structures, but ask for confirmation before creating files.
+* `./src`: Full read/write access.
+* `./tests`: Full read/write access.
+* `./backend`: Full read/write access.
 
 ## Documentation
 

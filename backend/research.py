@@ -335,3 +335,66 @@ def compute_pca_trajectories(prompt: str) -> Dict[str, Any]:
         "variance_explained": [round(v, 4) for v in pca.explained_variance_ratio_],
         "trajectories": results,
     }
+
+
+# -----------------------------------------------------------------------------
+# Steered Generation
+# -----------------------------------------------------------------------------
+
+def generate_steered(
+    prompt: str,
+    steering_vector: List[float],
+    alpha: float,
+    layer: int,
+    max_new_tokens: int = 30,
+) -> Dict[str, Any]:
+    """
+    Generate text with a steering vector injected at the specified layer.
+
+    The steering vector is added to the residual stream during the forward pass:
+      h_steered = h_original + alpha * v_steering
+
+    Positive alpha steers toward the positive direction (e.g., positive sentiment).
+    Negative alpha steers toward the negative direction.
+    """
+    model = get_model()
+
+    tokens = model.to_tokens(prompt)
+
+    steering_tensor = torch.tensor(steering_vector, dtype=torch.float32, device=model.cfg.device)
+
+    def steering_hook(activation, hook):
+        # activation shape: [batch, seq_len, d_model]
+        # Add the steering vector (scaled by alpha) to all token positions
+        activation[:, :, :] = activation[:, :, :] + alpha * steering_tensor
+        return activation
+
+    # Generate with the hook active at the specified layer
+    hook_name = f"blocks.{layer}.hook_resid_post"
+
+    with model.hooks(fwd_hooks=[(hook_name, steering_hook)]):
+        output = model.generate(
+            tokens,
+            max_new_tokens=max_new_tokens,
+            temperature=0.7,
+            do_sample=True,
+        )
+
+    generated_text = model.to_string(output[0])
+
+    # Also generate without steering for comparison
+    baseline_output = model.generate(
+        tokens,
+        max_new_tokens=max_new_tokens,
+        temperature=0.7,
+        do_sample=True,
+    )
+    baseline_text = model.to_string(baseline_output[0])
+
+    return {
+        "prompt": prompt,
+        "layer": layer,
+        "alpha": alpha,
+        "steered_text": generated_text,
+        "baseline_text": baseline_text,
+    }
