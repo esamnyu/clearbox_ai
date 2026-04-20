@@ -1,152 +1,164 @@
 # NeuroScope Research Strategy
 
-> Deep Research Analysis for Mechanistic Interpretability Project
-> January 2026
+> Rigorous replication and extension of the low-rank refusal finding in small Llamas
+> Revised April 19, 2026
 
 ---
 
 ## Executive Summary
 
-Based on consultation with Google DeepMind research guidance and comprehensive literature review, this document provides strategic recommendations for the NeuroScope project. The core insight: **refusal behavior in LLMs is mediated by a single direction in activation space**, making it an excellent target for demonstrating rigorous interpretability methodology.
+This strategy reframes NeuroScope as a **rigorous replication and extension** of a recent public claim (IvanC, LessWrong, March 2026) that refusal in Llama-3.2-3B-Instruct is **low-rank, not single-direction**. We confirm or refine the claim with held-out ablation, upgrade the measurement with harmfulness/refusal positional disentanglement (Zhao et al., 2025), and deliver a methodologically defensible writeup suitable as a portfolio or interview piece.
+
+The January 2026 plan targeted refusal research using Arditi et al.'s single-direction methodology. Three months of field movement force a reframe: the single-direction hypothesis **does not hold on our target model**, and last-token caching conflates two distinct representations. This revision absorbs both findings and converts the biggest methodological threat into the actual research question.
 
 ### Key Recommendations
 
-1. **Model**: Llama-3.2-3B-Instruct (best TransformerLens support, manageable size)
-2. **Target Behavior**: Refusal mechanisms (well-documented methodology exists)
-3. **Methodology**: Difference-of-means with directional ablation verification
-4. **Dataset**: JailbreakBench (100 harmful) + Alpaca subset (100 harmless)
-5. **Scope**: One complete experiment with full methodology (Level B)
+1. **Model**: Llama-3.2-3B-Instruct (unchanged — it is *because* refusal is low-rank here that the experiment is interesting)
+2. **Target behavior**: Refusal, treated as low-rank (k=3) not single-direction
+3. **Methodology**: Difference-of-means at k=1 (baseline) and SVD top-k (k=3), with directional ablation + addition as causal tests
+4. **Positional disentanglement**: Cache activations at both instruction-end and post-instruction positions (Zhao 2025)
+5. **Datasets**: JailbreakBench + Alpaca subset + SORRY-Bench held-out; StrongREJECT as automated evaluator
+6. **Scope**: One complete experiment (Level B) with a stretch SAE-decomposition pass
 
 ---
 
-## 1. Model Choice Decision
+## 1. Framing: Why Replication-Plus-Extension
 
-### The Core Problem
+### The Scientific Claim We Are Testing
 
-GPT-2 was never RLHF-trained, so it cannot refuse harmful requests. To study refusal mechanisms, you need a model that actually refuses. The DeepMind researcher was correct: this is a fundamental constraint.
+IvanC (LessWrong, March 2, 2026) reports empirically that Llama-3.2-3B-Instruct exhibits a low-rank refusal structure: a single extracted vector yields only 15–26% compliance, while stacking the top-3 SVD directions from layers {9, 10, 7} pushes compliance to ~37% at 94% coherence. Llama-3.1-8B and Qwen-3-1.7B, by contrast, remain well-modeled by a single direction.
 
-### TransformerLens Compatibility Analysis
+This is a blog post, not peer-reviewed work — which is exactly why it merits a rigorous, independent test. Our contribution:
 
-| Model | Support Status | VRAM Needed | Known Issues |
-|-------|---------------|-------------|--------------|
-| Llama-3.2-1B-Instruct | Fully Supported | ~4GB | None significant |
-| **Llama-3.2-3B-Instruct** | **Fully Supported** | **~8GB** | **None significant - RECOMMENDED** |
-| Gemma-2-2B-it | Supported | ~8GB+ | High VRAM usage bug reported |
-| Qwen-2.5-3B-Instruct | Supported | ~8GB | Rotary base config needed |
+1. **Confirm or refute** the k=3 > k=1 claim on a proper held-out split, with coherence and collateral damage measured.
+2. **Disentangle** harmfulness from refusal (Zhao et al., arXiv:2507.11878) — an upgrade IvanC did not include.
+3. **Characterize** where in the network low-rank structure emerges (which layers, which token positions).
 
-### Recommendation: Llama-3.2-3B-Instruct
+### Why Not Switch to Llama-3.1-8B
 
-- Best TransformerLens support with no known issues
-- Small enough to run on consumer GPU (8GB VRAM)
-- RLHF+DPO trained, so it reliably refuses harmful prompts
-- Used in the foundational "Refusal Direction" paper (Arditi et al., NeurIPS 2024)
-- Active community support and existing abliteration research
+Llama-3.1-8B would give a cleaner single-direction story and better SAE coverage via LlamaScope. We decline because:
+
+- The low-rank finding *is* the story on 3B. Chasing a cleaner graph by switching models is survivorship bias.
+- 8B needs ~16 GB VRAM; 3B fits 8 GB, which keeps local pair-programming tractable for Ethan.
+- A rigorous 3B-specific replication is more defensible than a derivative 8B study.
 
 ---
 
-## 2. Research Methodology
+## 2. Methodology
 
-### The Refusal Direction Method (Arditi et al., NeurIPS 2024)
+### Phase 1: Data Collection & Activation Caching
 
-This is the gold standard methodology for studying refusal. It demonstrates that refusal behavior is encoded in a one-dimensional subspace, making it tractable for analysis and verification.
+1. Run the model on 100 harmful instructions (JailbreakBench) and 100 matched harmless instructions (Alpaca, token-length-matched).
+2. Cache residual stream activations at **two positions** per sequence:
+   - **Instruction-end position** — hypothesized to encode harmfulness
+   - **Post-instruction position** — hypothesized to encode refusal
+3. Cache across middle-to-late layers (target range: 7–15 for Llama-3.2-3B).
+4. Hold out 50 examples per class for validation; never touch during extraction.
 
-### Phase 1: Data Collection
+### Phase 2: Direction Extraction at Two Ranks
 
-1. Run model on n harmful instructions (n=100-512)
-2. Run model on n harmless instructions (matched count)
-3. Cache residual stream activations at last token position
-4. Focus on upper layers (e.g., layer 10-15 for Llama-3.2)
+For each (layer L, position P), extract both:
 
-### Phase 2: Compute Refusal Direction
+```
+k = 1 (baseline):  r = mean(harmful_activations) − mean(harmless_activations)
+k = 3 (primary):   r_1, r_2, r_3 = top-3 left singular vectors of the per-example
+                   difference matrix [harmful_i − harmless_i]_i
+```
 
-For each layer, compute:
-
-> *r = mean(harmful_activations) - mean(harmless_activations)*
-
-Normalize this vector. The direction r points from "compliant" to "refusing" in activation space.
+The k=1 vs k=3 comparison is the central experiment.
 
 ### Phase 3: Causal Verification
 
-**Necessity Test (Ablation):**
-- Remove the refusal direction component from activations
-- Re-run harmful prompts
-- Expected: Model no longer refuses (attack success rate increases)
+For each rank condition, run two intervention tests on held-out prompts:
 
-**Sufficiency Test (Addition):**
-- Add the refusal direction to activations on harmless prompts
-- Expected: Model starts refusing harmless requests
+- **Necessity (ablation)**: Project residual stream orthogonal to the direction(s). Measure attack success rate on held-out harmful prompts.
+- **Sufficiency (addition)**: Add the direction(s), scaled by α, to the residual stream on held-out harmless prompts. Measure induced refusal rate.
+
+Score refusal with StrongREJECT, not keyword matching.
+
+### Phase 4: Collateral Damage Measurement
+
+Run the k=3 ablated model on:
+
+- MMLU subset — report accuracy delta vs. unablated
+- KL divergence vs. unablated model on 500 held-out Alpaca prompts
+- XSTest — over-refusal on safe-but-sensitive prompts
+
+Methodological rigor comes from reporting the cost alongside the gain.
+
+### Phase 5 (Stretch): SAE Decomposition
+
+If weeks 3–4 run under budget:
+
+- Load publicly available SAEs for Llama-3.2-3B where available; otherwise skip.
+- Project the top-3 refusal directions into SAE feature space.
+- Report which features fire, with candidate semantic labels.
+
+Community signal (secondhand, unverified) suggests DeepMind has deprioritized fundamental SAE research because linear probes outperform them on harmful-intent detection. We therefore treat SAEs as interpretability polish, not as the source of causal claims.
 
 ---
 
-## 3. Dataset Construction
+## 3. Datasets
 
-### Recommended Datasets
+| Dataset | Role | Size |
+|---------|------|------|
+| **JailbreakBench** | Primary harmful prompts | 100 behaviors |
+| **Alpaca (subset)** | Matched harmless prompts | 100–200, length-matched |
+| **SORRY-Bench** | Held-out evaluation across finer taxonomy | 440 across 44 topics |
+| **XSTest** | Over-refusal evaluation | 450 prompts |
+| **StrongREJECT** | Automated refusal evaluator (not a dataset) | — |
 
-| Dataset | Size | Use Case |
-|---------|------|----------|
-| **JailbreakBench** | 100 behaviors | Primary harmful prompt source - curated, aligned with OpenAI policies |
-| AdvBench | 520 examples | Extended harmful behaviors including profanity, threats, misinformation |
-| Alpaca | 52,000 | Harmless instruction-following (sample 100-500 for balance) |
-| XSTest | 450 prompts | Over-refusal evaluation (false positives / exaggerated safety) |
-
-### Sample Size Guidelines
-
-| Purpose | Minimum | Recommended |
-|---------|---------|-------------|
-| Initial exploration | 32 pairs | 64-100 pairs |
-| Direction extraction | 100 pairs | 200-500 pairs |
-| Held-out validation | 50 pairs | 100+ pairs |
+Changes from January 2026: **SORRY-Bench** added for finer-grained taxonomy vs JailbreakBench's flat 100 behaviors; **StrongREJECT** established as the canonical automated evaluator (outperforms keyword-based non-refusal detection).
 
 ### Dataset Quality Checklist
 
-- **Single feature isolation:** Pairs differ only in target aspect (harmful vs harmless)
-- **Token length matching:** Similar token counts prevent positional artifacts
-- **Semantic similarity:** Same structure/style, only harm-related content differs
-- **Chat template compliance:** Use model's instruction format consistently
+- Pairs differ only in harmfulness
+- Token-length-matched per pair
+- Chat-template-compliant (Llama-3.2 instruction format)
+- Held-out splits for validation and collateral damage
+- Never train and evaluate on the same JailbreakBench examples
 
 ---
 
 ## 4. Visualization Strategy
 
-Start with the most informative visualizations that directly support the research question.
+### Priority 1: k=1 vs k=3 Attack-Success-Rate Comparison
 
-### Priority 1: Head Activation Grid
+The headline plot. Directly shows the central claim. Bar chart or paired points per ablation strength.
 
-Shows which heads are most active when the model refuses. This directly answers "which components matter?" and helps identify candidate refusal heads for ablation.
+### Priority 2: Per-Layer, Per-Position Direction Strength
 
-### Priority 2: Attention Heatmap
+At each layer, cosine similarity of the k=1 direction across positions (instruction-end vs post-instruction), plus magnitude per layer. Makes the Zhao et al. disentanglement visible.
 
-Shows where each head attends. Once you identify candidate refusal heads from the grid, attention patterns reveal what those heads are "looking at" when they activate.
+### Priority 3: Collateral Damage Plot
 
-### Priority 3: Logit Lens
+MMLU delta and Alpaca-KL as a function of ablation strength. Honest framing.
 
-Layer-by-layer predictions showing how the model's "thinking" evolves. Useful for seeing when refusal emerges in the forward pass.
+### Priority 4 (if time): Head Activation Grid
 
-### Defer: 3D PCA Trajectory
+Which heads fire most during refusal. Useful for interpreting what the low-rank subspace is doing.
 
-While visually compelling, PCA trajectories are harder to interpret and don't directly support causal claims. Implement after core analysis is complete.
+### Defer
+
+3D PCA trajectories and embedding spaces. Visually compelling but do not support causal claims.
 
 ---
 
 ## 5. Common Pitfalls to Avoid
 
-### Methodological Pitfalls
+### Methodological
 
-1. **Zero Ablation:** Use mean ablation instead. Zero has no special meaning in activation space.
+1. **Zero ablation** — use mean ablation instead. Zero has no privileged meaning in activation space.
+2. **Single-direction overconfidence** — *known wrong* for Llama-3.2-3B. Always report k=1 and k=3.
+3. **Position conflation** — last-token caching conflates harmfulness and refusal (Zhao 2025). Cache at both positions.
+4. **Collateral damage silence** — MLP ablation hurts capability more than attention ablation. Report KL, MMLU delta, and XSTest over-refusal explicitly.
+5. **Insufficient held-out validation** — training on JailbreakBench and evaluating on JailbreakBench is a classic reviewer flag.
 
-2. **Single Direction Overconfidence:** Recent work shows refusal may be multidimensional. Report cosine similarities between topic-specific directions.
+### Conceptual
 
-3. **Ignoring Collateral Damage:** Ablation can affect model capabilities. Always test on harmless prompts too.
-
-4. **Insufficient Validation:** Test on held-out sets AND adversarial jailbreak prompts.
-
-### Conceptual Pitfalls
-
-1. **Correlation vs Causation:** Always perform intervention experiments (ablation + addition), not just correlation analysis.
-
-2. **Semantic Overinterpretation:** The refusal direction's semantic meaning is unclear. Report what you observe, not what you assume.
-
-3. **Generalization Assumptions:** Findings on one model may not transfer. Be explicit about scope.
+1. **Correlation vs. causation** — intervention is required (ablation + addition), not just probe accuracy.
+2. **Semantic overinterpretation** — the refusal subspace's "meaning" is unclear. Report observations, not assumed interpretations.
+3. **Generalization leaps** — the claim is scoped to Llama-3.2-3B. Do not imply findings transfer without testing.
 
 ---
 
@@ -154,55 +166,92 @@ While visually compelling, PCA trajectories are harder to interpret and don't di
 
 | Question | Recommendation | Rationale |
 |----------|---------------|-----------|
-| Q1: Model Choice | **Llama-3.2-3B-Instruct** | Best TransformerLens support, proven for refusal research |
-| Q2: Target Behavior | **Refusal mechanisms** | Well-documented methodology, aligns with safety relevance for Moon |
-| Q3: Dataset Scope | **Multiple categories (3-4 types)** | Stronger claim, test generalization across harm types |
-| Q4: Real-Time Level | **On-submit (not streaming)** | Lower complexity, sufficient for research goals |
-| Q5: First Visualizations | **Head activation grid + Attention heatmap** | Directly support identifying and analyzing refusal components |
-| Q6: Depth Level | **Level B: One complete experiment** | Demonstrates full methodology without overcommitting |
-| Q7: GPT-2 Work | **Option C: Port patterns to new model** | Use existing codebase as template, don't maintain two tracks |
-| Q8: Runtime Environment | **Python backend (TransformerLens)** | Required for proper activation extraction and ablation |
+| Q1: Model | **Llama-3.2-3B-Instruct** | Low-rank structure here *is* the research question |
+| Q2: Target behavior | **Refusal (low-rank, k=3)** | Direct test of IvanC March 2026 finding |
+| Q3: Dataset scope | **JB + Alpaca + SORRY-Bench held-out** | Held-out generalization across harm taxonomy |
+| Q4: Real-time level | **On-submit (not streaming)** | Unchanged — lower complexity, sufficient |
+| Q5: First visualizations | **k=1 vs k=3 ASR + collateral damage** | Support the central claim honestly |
+| Q6: Depth level | **Level B with SAE stretch** | One complete experiment + optional polish |
+| Q7: GPT-2 work | **Port patterns, do not maintain two tracks** | Unchanged |
+| Q8: Runtime | **Python + TransformerLens v2.x** | v3.0 released Apr 17 2026; migrate after experiment |
 
 ---
 
-## 7. Recommended Implementation Roadmap
+## 7. Tooling
+
+### Primary: TransformerLens v2.x, pinned
+
+v3.0 released April 17, 2026 — two days before this revision. Debugging a fresh API migration (new `TransformerBridge` interface, legacy API deprecated) at the same time as new methodology is too many unknowns. Pin v2.x now; evaluate v3 migration as a follow-up project.
+
+### Alternative to Evaluate Later
+
+**nnterp** (arXiv:2511.14465, NeurIPS 2025 MI workshop) wraps `nnsight` to give a standardized interface across 50+ HuggingFace architectures without reimplementation — which sidesteps the numerical-mismatch risk TransformerLens carries. Worth a week-long spike in a v2 project.
+
+### Hardware
+
+Llama-3.2-3B fp16 fits comfortably in 8 GB VRAM. CPU/MPS fallback works for smoke tests but is too slow for full 100-prompt runs. A single mid-range consumer GPU is enough.
+
+---
+
+## 8. Revised Roadmap
 
 ### Week 1: Foundation
 
-- **Ethan:** Verify Llama-3.2-3B-Instruct loads in TransformerLens, test activation extraction
-- **Moon:** Download JailbreakBench, sample Alpaca, verify model refuses harmful prompts
+- **Ethan** — Pin TransformerLens v2.x; verify Llama-3.2-3B-Instruct loads via `HookedTransformer.from_pretrained`; implement dual-position activation caching; 10-example smoke test.
+- **Moon** — Download JailbreakBench; sample Alpaca; token-length-match 100 pairs; verify model refuses all 100 harmful baseline; read IvanC post + Zhao et al. + Arditi et al.
 
 ### Week 2: Direction Extraction
 
-- **Ethan:** Build activation caching pipeline, expose via API endpoint
-- **Moon:** Compute difference-of-means across layers, identify best layer for refusal direction
+- **Ethan** — Implement diff-of-means (k=1) and SVD top-k (k=3) extraction; expose both as FastAPI endpoints.
+- **Moon** — Run extraction across layers 7–15 at both positions; identify best (layer, position) per rank; produce per-layer direction-strength plot.
 
 ### Week 3: Causal Verification
 
-- **Ethan:** Implement ablation infrastructure (direction removal hooks)
-- **Moon:** Run ablation experiments, measure attack success rate changes
+- **Ethan** — Implement ablation + addition hooks for both ranks; implement collateral damage harness (MMLU subset, Alpaca-KL, XSTest, StrongREJECT).
+- **Moon** — Run all four intervention combinations on held-out sets; log ASR, coherence, MMLU delta, KL, over-refusal rate.
 
-### Week 4: Visualization & Write-up
+### Week 4: Analysis & Writeup
 
-- **Ethan:** Build head activation grid and attention heatmap visualizations
-- **Moon:** Interpret results, draft findings for portfolio/interview story
+- **Ethan** — Build the three headline visualizations; if time, head activation grid.
+- **Moon** — Interpret results; draft methodology and findings. Stretch: SAE decomposition of top-3 directions.
 
 ---
 
-## 8. Key References
+## 9. Key References
 
-### Foundational Papers
+### Foundational (retained from January 2026)
 
-- **Arditi et al., NeurIPS 2024:** "Refusal in Language Models Is Mediated by a Single Direction" - Primary methodology
-- **Heimersheim, 2024:** "How to Use and Interpret Activation Patching" - Best practices for intervention experiments
-- **Open Problems in Mechanistic Interpretability, Jan 2025:** Current research landscape overview from FAR.AI
+- Arditi et al., NeurIPS 2024 — "Refusal in Language Models Is Mediated by a Single Direction" (arXiv:2406.11717) — the original single-direction methodology, which this project tests
+- Heimersheim, 2024 — "How to Use and Interpret Activation Patching" — intervention best practices
+- FAR.AI, Jan 2025 — "Open Problems in Mechanistic Interpretability"
+
+### New (added April 2026)
+
+- **IvanC**, LessWrong, March 2, 2026 — ["Single Direction vs Low-Rank Refusal in Small LLMs"](https://www.lesswrong.com/posts/LMkvjDTLKFrgdzJdG/single-direction-vs-low-rank-refusal-in-small-llms-1) — the specific claim being replicated
+- **Zhao et al.**, 2025 — "LLMs Encode Harmfulness and Refusal Separately" ([arXiv:2507.11878](https://arxiv.org/abs/2507.11878)) — positional disentanglement
+- **Wen et al.**, ICLR 2026 — "The Geometry of Refusal in LLMs: Concept Cones and Representational Independence" ([arXiv:2502.17420](https://arxiv.org/abs/2502.17420)) — multi-dimensional refusal
+- **SOM Directions are Better than One**, AAAI 2026 ([arXiv:2511.08379](https://arxiv.org/abs/2511.08379)) — generalization of diff-of-means
+- **O'Brien et al.**, EMNLP Findings 2025 — "Understanding Refusal in LMs with SAEs" — SAE-based decomposition
+- **nnterp**, NeurIPS 2025 MI workshop ([arXiv:2511.14465](https://arxiv.org/abs/2511.14465)) — tooling alternative to TransformerLens
 
 ### Tools & Datasets
 
-- **TransformerLens:** github.com/TransformerLensOrg/TransformerLens
-- **JailbreakBench:** jailbreakbench.github.io
-- **Abliteration Tutorial:** huggingface.co/blog/mlabonne/abliteration
+- TransformerLens v2.x — github.com/TransformerLensOrg/TransformerLens
+- JailbreakBench — jailbreakbench.github.io
+- SORRY-Bench — sorry-bench.github.io
+- StrongREJECT — the automated refusal evaluator of record
+- XSTest — over-refusal benchmark
 
 ---
 
-*This document was compiled from deep research across academic papers, GitHub repositories, and interpretability community resources. The recommendations prioritize demonstrable competence and methodological rigor over novelty, aligning with the project's goals as a learning exercise and portfolio piece.*
+## 10. Out-of-Scope Questions
+
+Scope is Llama-3.2-3B-Instruct specifically. Natural follow-ups, not this project's burden:
+
+- **Does low-rank refusal scale with parameter count?** Would require running the same pipeline on 1B, 3B, 8B, 70B.
+- **Is the low-rank structure a training-data artifact or an architectural property?** Requires comparison across model families.
+- **Does the harmfulness/refusal disentanglement replicate here?** Zhao tested Gemma and Llama-3.1; adding Llama-3.2-3B is a free bonus contribution from this project.
+
+---
+
+*Revised April 19, 2026 to incorporate post-January field developments: low-rank refusal in small Llamas (IvanC, March 2026), harmfulness/refusal positional disentanglement (Zhao et al., 2025), SAE decomposition work (O'Brien et al., EMNLP 2025), and tooling shifts (TransformerLens v3, nnterp). The January 2026 version is preserved in git history.*
