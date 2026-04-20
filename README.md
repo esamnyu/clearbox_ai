@@ -1,158 +1,108 @@
-# NeuroScope-Web
+# NeuroScope-Web / ClearBox AI
 
-> Browser-based mechanistic interpretability toolkit for GPT-2 with adversarial capabilities
+> Rigorous mechanistic interpretability for refusal-direction research on small Llama models.
 
-A collaborative project for visualizing and manipulating transformer internals, designed for pair programming between an engineer and an ML researcher.
+A paired engineer + researcher project investigating where refusal mechanisms live in the residual stream of Llama-3.2-3B-Instruct, with proper held-out causal verification and collateral-damage measurement.
+
+**Status**: Pre-experiment foundation (April 2026). Next: Week 1 of [docs/RESEARCH_STRATEGY.md](./docs/RESEARCH_STRATEGY.md).
+
+## The Research Question
+
+Default methodology for studying refusal — difference-of-means extraction of a single "refusal direction" — under-characterizes refusal structure in small Llama models. A [March 2026 LessWrong post](https://www.lesswrong.com/posts/LMkvjDTLKFrgdzJdG/single-direction-vs-low-rank-refusal-in-small-llms-1) reports that on Llama-3.2-3B-Instruct, a single extracted vector yields only 15–26% compliance on ablation, while the top-3 SVD directions from layers {9, 10, 7} push compliance to ~37% at 94% coherence.
+
+This project:
+
+1. **Replicates** the k=1 vs k=3 comparison with proper held-out splits, collateral damage measurement, and StrongREJECT evaluation.
+2. **Extends** by disentangling harmfulness (encoded at instruction-end position) from refusal (post-instruction position), per [Zhao et al. 2025](https://arxiv.org/abs/2507.11878).
+3. **Measures cost** — MMLU delta, Alpaca KL-divergence, XSTest over-refusal — alongside gain.
+
+See [docs/RESEARCH_STRATEGY.md](./docs/RESEARCH_STRATEGY.md) for full methodology.
 
 ## Quick Start
 
+### Python backend (research path)
+
 ```bash
-# Install dependencies
-npm install
-
-# Start development server (runs on port 3001)
-npm run dev
-
-# Open browser
-http://localhost:3001
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+# API docs at http://localhost:8000/docs
 ```
 
-## Session 1 Checkpoint
+### TypeScript frontend (visualization / demo)
 
-Load GPT-2 → Tokenize "Hello world" → Verify tokens: `["Hello", " world"]`, IDs: `[15496, 995]`
+```bash
+npm install
+npm run dev   # http://localhost:3001
+```
 
 ## Documentation
 
-| Document | Audience | Purpose |
-|----------|----------|---------|
-| [**docs/ARCHITECTURE.md**](./docs/ARCHITECTURE.md) | Both | Full technical architecture, tech stack, roadmap |
-| [**docs/RESEARCHER_GUIDE.md**](./docs/RESEARCHER_GUIDE.md) | ML Researcher | TensorView API, analysis examples, onboarding |
-| [**docs/COLLABORATION_WORKFLOW.md**](./docs/COLLABORATION_WORKFLOW.md) | Both | Pair programming workflow, session structure |
-| [**docs/README.md**](./docs/README.md) | Both | Documentation index, current status |
+| Document | Purpose |
+|---|---|
+| [**docs/RESEARCH_STRATEGY.md**](./docs/RESEARCH_STRATEGY.md) | **Current research plan** (revised April 2026 for low-rank refusal framing) |
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Full technical architecture |
+| [docs/RESEARCHER_GUIDE.md](./docs/RESEARCHER_GUIDE.md) | Researcher workspace onboarding |
+| [docs/COLLABORATION_WORKFLOW.md](./docs/COLLABORATION_WORKFLOW.md) | Pair-programming workflow |
+| [docs/TESTING_STRATEGY.md](./docs/TESTING_STRATEGY.md) | Test architecture (frontend) |
 
 ## Project Structure
 
 ```
 clearbox_ai/
-├── docs/                      # All documentation
-├── src/
-│   ├── analysis/             # 🧑‍🔬 Researcher workspace (analysis functions)
-│   ├── engine/              # 🔧 Model inference (Web Worker)
-│   ├── store/               # State management
-│   └── App.tsx              # Main UI
-└── package.json
+├── backend/             # Python + FastAPI + TransformerLens — primary research path
+│   ├── main.py          #   FastAPI endpoints (logit-lens, attention, gradients, steering)
+│   ├── model.py         #   HookedTransformer singleton
+│   ├── research.py      #   Research logic (ported from Moon's notebooks)
+│   └── requirements.txt
+├── src/                 # TypeScript + React — visualization / demo
+│   ├── analysis/        #   Pure tensor-math research layer (no React / DOM)
+│   ├── engine/          #   Web Worker running transformers.js (historical GPT-2 work)
+│   ├── store/
+│   └── App.tsx
+├── docs/                # Strategy, methodology, collaboration
+├── notebooks/           # Moon's interpretability prototypes (interp_test, steering_vectors)
+└── tests/               # Frontend unit tests (Vitest)
 ```
 
-## For Researchers
+## Team
 
-**Your workspace**: [`src/analysis/`](./src/analysis/)
-
-Find your tasks:
-```bash
-grep -r "RESEARCHER TODO" src/analysis/
-```
-
-See: [RESEARCHER_GUIDE.md](./docs/RESEARCHER_GUIDE.md)
-
-## For Engineers
-
-**Tech stack**:
-- Vite + React 18 + TypeScript (strict)
-- Transformers.js (WebGPU backend)
-- Zustand (state management)
-- TailwindCSS + Radix UI
-
-See: [ARCHITECTURE.md](./docs/ARCHITECTURE.md)
-
-## Current Phase
-
-**Phase 1: Observation Mode** (Weeks 1-2)
-
-- [x] Vite + React + TypeScript setup
-- [x] Web Worker with Comlink
-- [x] TensorView class (partial)
-- [ ] Hidden state extraction
-- [ ] Attention heatmap visualization
-
-## Features
-
-### Phase 1: Observation Mode
-- ✅ Model loading (GPT-2, GPT-2-medium)
-- ✅ Tokenization display
-- 🚧 Hidden state extraction
-- 🚧 Attention pattern visualization
-- 🚧 3D embedding space
-
-### Phase 2: Control Mode
-- ⏳ Split ONNX model export
-- ⏳ Steering vector injection
-- ⏳ Manual residual stream manipulation
-
-### Phase 3: Automated Attack
-- ⏳ Gradient estimation (finite differences)
-- ⏳ Genetic adversarial search (GCG-style)
-- ⏳ Real-time loss curve visualization
-
-## Scripts
-
-```bash
-npm run dev          # Start dev server (port 3001)
-npm run build        # Production build
-npm run preview      # Preview production build
-npm run test         # Run tests
-npm run test:watch   # Watch mode
-npm run lint         # Lint code
-```
+- **Ethan Sam** — engineering, product, tooling
+- **Mahmoud "Moon"** — AI Security researcher, CMU
+- **Advisor consultation**: Anthony Chen, Google DeepMind (Jan 2026)
 
 ## Tech Stack
 
-**Framework**: Vite + React 18 + TypeScript (strict mode)
-**Inference**: @xenova/transformers v3 (WebGPU)
-**State**: Zustand v4
-**Visualization**: React-Three-Fiber + visx
-**UI**: TailwindCSS + Radix UI
-**Worker**: Comlink (type-safe RPC)
+**Research backend**
+- Python 3.11+, FastAPI
+- TransformerLens v2.x (pinned; v3.0 migration deferred)
+- PyTorch, Hugging Face Transformers
 
-## Architecture
+**Frontend / demo**
+- Vite, React 18, TypeScript (strict)
+- Zustand, Comlink, transformers.js
+- TailwindCSS, Radix UI
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  RESEARCHER LAYER    Pure functions on TensorView          │
-│  (src/analysis/)     NO React, NO DOM, NO async            │
-├─────────────────────────────────────────────────────────────┤
-│  INTERFACE LAYER     React hooks bridging engine ↔ viz     │
-│  (src/hooks/)        useLayerActivations(), useAttention() │
-├─────────────────────────────────────────────────────────────┤
-│  ENGINE LAYER        Web Worker running transformers.js    │
-│  (src/engine/)       Returns typed arrays + shape metadata │
-├─────────────────────────────────────────────────────────────┤
-│  VISUALIZATION       React components consuming data       │
-│  (src/vis/)          AttentionHeatmap, EmbeddingSpace      │
-└─────────────────────────────────────────────────────────────┘
-```
+**Evaluation stack**
+- StrongREJECT (automated refusal evaluator)
+- JailbreakBench, Alpaca, SORRY-Bench, XSTest
 
-## Contributing
+## Companion OSS Contribution
 
-This is a collaborative project with specific roles:
+StrongREJECT detector PR to NVIDIA's [garak](https://github.com/NVIDIA/garak) red-team scanner — [issue #973](https://github.com/NVIDIA/garak/issues/973). The parser is shared logic between garak and this project's backend evaluator.
 
-**Researcher**: Adds analysis code in `src/analysis/`
-**Engineer**: Adds infrastructure in `src/engine/`, `src/hooks/`, `src/vis/`
+## Key References
 
-See [COLLABORATION_WORKFLOW.md](./docs/COLLABORATION_WORKFLOW.md) for detailed workflow.
+- Arditi et al., NeurIPS 2024 — [Refusal in Language Models Is Mediated by a Single Direction](https://arxiv.org/abs/2406.11717) (the original methodology being tested)
+- IvanC, LessWrong March 2026 — [Single Direction vs Low-Rank Refusal in Small LLMs](https://www.lesswrong.com/posts/LMkvjDTLKFrgdzJdG/single-direction-vs-low-rank-refusal-in-small-llms-1) (the specific claim being replicated)
+- Zhao et al., 2025 — [LLMs Encode Harmfulness and Refusal Separately](https://arxiv.org/abs/2507.11878)
+- Souly et al., NeurIPS 2024 — [A StrongREJECT for Empty Jailbreaks](https://arxiv.org/abs/2402.10260)
+- [TransformerLens](https://github.com/TransformerLensOrg/TransformerLens), [Transformer Circuits (Anthropic)](https://transformer-circuits.pub)
 
 ## License
 
 MIT
 
-## References
-
-- [Transformer Circuits (Anthropic)](https://transformer-circuits.pub)
-- [Transformers.js](https://huggingface.co/docs/transformers.js)
-- [TransformerLens](https://github.com/neelnanda-io/TransformerLens)
-- [GCG Attacks](https://arxiv.org/abs/2307.15043)
-
 ---
 
-**Status**: Phase 1, Session 1 (TensorView implementation)
-**Contributors**: Engineer + ML Researcher (CMU)
-**Last Updated**: 2025-12-21
+**Last updated**: April 19, 2026
