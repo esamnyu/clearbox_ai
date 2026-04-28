@@ -84,6 +84,15 @@ class SteeredGenerationRequest(BaseModel):
     max_new_tokens: int = Field(default=30, ge=1, le=100)
 
 
+class AblationRequest(BaseModel):
+    prompt: str
+    direction: List[float] = Field(
+        ..., description="Direction to project out of the residual stream"
+    )
+    layer: int = Field(default=6, ge=0, le=11, description="Layer for ablation")
+    max_new_tokens: int = Field(default=30, ge=1, le=100)
+
+
 # -----------------------------------------------------------------------------
 # Endpoints
 # -----------------------------------------------------------------------------
@@ -208,6 +217,29 @@ async def generate_steered(req: SteeredGenerationRequest):
             req.prompt,
             req.steering_vector,
             req.alpha,
+            req.layer,
+            req.max_new_tokens,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/ablate-direction")
+async def ablate_direction(req: AblationRequest):
+    """
+    Generate text with a direction projected out of the residual stream.
+
+    Implements h' = h - (h · d̂) d̂ at the chosen layer. This is the causal
+    counterpart to /generate-steered: where steering ADDS a scaled vector,
+    ablation REMOVES the component along the direction. Standard primitive
+    for testing claims like "direction d mediates behavior X" (Arditi et al.).
+
+    Returns ablated and baseline generations for side-by-side comparison.
+    """
+    try:
+        return research.ablate_along_direction(
+            req.prompt,
+            req.direction,
             req.layer,
             req.max_new_tokens,
         )

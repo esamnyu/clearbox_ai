@@ -35,11 +35,13 @@ import {
   getContrastivePairs,
   getSteeringVector,
   generateSteered,
+  ablateDirection,
   type LogitLensResponse,
   type GradientsResponse,
   type ContrastivePairsResponse,
   type SteeringVectorResponse,
   type SteeredGenerationResponse,
+  type AblationResponse,
 } from "@/lib/api";
 
 export interface HeadGridCell {
@@ -90,6 +92,9 @@ interface AnalysisState {
   steeringLayer: number;
   steeringAlpha: number;
 
+  // Ablation state — uses steeringVector as the direction to project out
+  ablatedResult: AblationResponse | null;
+
   // ─────────────────────────────────────────────────────────────────────────
   // ACTIONS
   // ─────────────────────────────────────────────────────────────────────────
@@ -124,6 +129,9 @@ interface AnalysisState {
   runSteeredGeneration: (prompt: string) => Promise<void>;
   setSteeringLayer: (layer: number) => void;
   setSteeringAlpha: (alpha: number) => void;
+
+  // Ablation actions
+  runAblation: (prompt: string) => Promise<void>;
 }
 
 const initialState = {
@@ -143,6 +151,7 @@ const initialState = {
   steeredResult: null,
   steeringLayer: 6,
   steeringAlpha: 1.0,
+  ablatedResult: null,
 } as const;
 
 export const useAnalysisStore = create<AnalysisState>((set, get) => ({
@@ -163,6 +172,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   steeredResult: initialState.steeredResult,
   steeringLayer: initialState.steeringLayer,
   steeringAlpha: initialState.steeringAlpha,
+  ablatedResult: initialState.ablatedResult,
 
   analyze: (result: GenerationResult) => {
     const attentions = attentionsToLayerMap(result.attentions ?? [], 0);
@@ -316,6 +326,22 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   setSteeringLayer: (layer: number) => set({ steeringLayer: layer }),
   setSteeringAlpha: (alpha: number) => set({ steeringAlpha: alpha }),
 
+  runAblation: async (prompt: string) => {
+    const state = get();
+    if (!state.steeringVector) return;
+    try {
+      set({ backendError: null });
+      const result = await ablateDirection(
+        prompt,
+        state.steeringVector.vector,
+        state.steeringLayer,
+      );
+      set({ ablatedResult: result });
+    } catch (e) {
+      set({ backendError: String(e) });
+    }
+  },
+
   reset: () => {
     set({
       attentions: initialState.attentions,
@@ -332,6 +358,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       contrastivePairs: null, // keep pairs (they don't change)
       steeringVector: null,
       steeredResult: null,
+      ablatedResult: null,
     });
   },
 }));

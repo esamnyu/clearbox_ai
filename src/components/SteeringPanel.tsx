@@ -25,9 +25,12 @@ export default function SteeringPanel({ prompt }: SteeringPanelProps) {
   const runSteeredGeneration = useAnalysisStore((s) => s.runSteeredGeneration);
   const setSteeringLayer = useAnalysisStore((s) => s.setSteeringLayer);
   const setSteeringAlpha = useAnalysisStore((s) => s.setSteeringAlpha);
+  const ablatedResult = useAnalysisStore((s) => s.ablatedResult);
+  const runAblation = useAnalysisStore((s) => s.runAblation);
 
   const [isComputingVector, setIsComputingVector] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isAblating, setIsAblating] = useState(false);
 
   // Fetch contrastive pairs on mount when backend is connected
   useEffect(() => {
@@ -62,6 +65,17 @@ export default function SteeringPanel({ prompt }: SteeringPanelProps) {
       await runSteeredGeneration(prompt);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleAblate = async () => {
+    if (!prompt.trim()) return;
+
+    setIsAblating(true);
+    try {
+      await runAblation(prompt);
+    } finally {
+      setIsAblating(false);
     }
   };
 
@@ -251,6 +265,59 @@ export default function SteeringPanel({ prompt }: SteeringPanelProps) {
               </div>
             </div>
           )}
+
+          {/* Section 4: Ablation — project the direction out (causal test) */}
+          <div className="mt-6 pt-6 border-t border-slate-800">
+            <h3 className="text-sm font-medium text-slate-300 mb-2">
+              Ablate Direction
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Removes the projection of the residual stream onto this direction
+              at layer {steeringLayer}:{" "}
+              <span className="font-mono text-slate-400">
+                h&prime; = h &minus; (h &middot; d&#770;)&thinsp;d&#770;
+              </span>
+            </p>
+
+            <button
+              type="button"
+              onClick={handleAblate}
+              disabled={
+                isAblating || !prompt.trim() || backendStatus !== "connected"
+              }
+              className="px-4 py-1.5 text-sm font-medium rounded-md bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors mb-4"
+            >
+              {isAblating ? "Ablating..." : "Generate with Ablation"}
+            </button>
+
+            {isAblating && (
+              <p className="text-sm text-slate-400 italic">
+                Running ablated generation...
+              </p>
+            )}
+
+            {!isAblating && ablatedResult !== null && (
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                <div className="bg-slate-950 rounded-md p-4 border border-slate-800">
+                  <h4 className="text-xs font-medium text-slate-400 mb-2">
+                    Baseline
+                  </h4>
+                  <p className="font-mono text-sm text-white whitespace-pre-wrap">
+                    {ablatedResult.baseline_text}
+                  </p>
+                </div>
+                <div className="bg-slate-950 rounded-md p-4 border border-rose-700/50">
+                  <h4 className="text-xs font-medium text-rose-400 mb-2">
+                    Ablated (layer {ablatedResult.layer}, |d|=
+                    {ablatedResult.direction_norm_before.toFixed(2)})
+                  </h4>
+                  <p className="font-mono text-sm text-rose-200 whitespace-pre-wrap">
+                    {ablatedResult.ablated_text}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </section>

@@ -77,6 +77,14 @@ export interface SteeredGenerationResponse {
   baseline_text: string;
 }
 
+export interface AblationResponse {
+  prompt: string;
+  layer: number;
+  direction_norm_before: number;
+  ablated_text: string;
+  baseline_text: string;
+}
+
 export interface PcaTrajectoryPoint {
   token: string;
   token_idx: number;
@@ -200,4 +208,19 @@ export function getPcaTrajectories(
   prompt: string,
 ): Promise<PcaTrajectoriesResponse> {
   return postJson<PcaTrajectoriesResponse>("/pca-trajectories", { prompt });
+}
+
+/** POST /ablate-direction — Generate with a direction projected out. */
+export function ablateDirection(
+  prompt: string,
+  direction: number[],
+  layer: number,
+  maxNewTokens: number = 30,
+): Promise<AblationResponse> {
+  return postJson<AblationResponse>("/ablate-direction", {
+    prompt,
+    direction,
+    layer,
+    max_new_tokens: maxNewTokens,
+  });
 }

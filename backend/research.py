@@ -398,3 +398,73 @@ def generate_steered(
         "steered_text": generated_text,
         "baseline_text": baseline_text,
     }
+
+
+# -----------------------------------------------------------------------------
+# Direction Ablation (Projection Removal)
+# -----------------------------------------------------------------------------
+# The causal counterpart to steering: instead of ADDING a vector, REMOVE the
+# component of the residual stream that lies along the direction. This is the
+# standard primitive for testing causal claims of the form "direction d
+# mediates behavior X" (Arditi et al., 2024 — refusal direction).
+
+def ablate_along_direction(
+    prompt: str,
+    direction: List[float],
+    layer: int,
+    max_new_tokens: int = 30,
+) -> Dict[str, Any]:
+    """
+    Generate text with the projection along `direction` removed at `layer`.
+
+    Hook math: h' = h - (h · d̂) d̂   where d̂ = direction / ||direction||
+
+    Zeros the residual stream's component along d̂ at every token position of
+    the chosen layer. Contrast with generate_steered, which adds alpha * v.
+
+    Returns both ablated and baseline generations so the caller can show a
+    side-by-side. Sampling temperature matches generate_steered for parity.
+    """
+    model = get_model()
+
+    direction_tensor = torch.tensor(
+        direction, dtype=torch.float32, device=model.cfg.device
+    )
+    norm = direction_tensor.norm()
+    if norm.item() < 1e-8:
+        raise RuntimeError("direction has near-zero norm; cannot ablate")
+    unit_direction = direction_tensor / norm
+
+    tokens = model.to_tokens(prompt)
+
+    def ablation_hook(activation, hook):
+        # activation shape: [batch, seq_len, d_model]
+        # Project each position's residual onto d̂, subtract that component.
+        coeffs = (activation * unit_direction).sum(dim=-1, keepdim=True)
+        activation[:, :, :] = activation - coeffs * unit_direction
+        return activation
+
+    hook_name = f"blocks.{layer}.hook_resid_post"
+
+    with model.hooks(fwd_hooks=[(hook_name, ablation_hook)]):
+        ablated_output = model.generate(
+            tokens,
+            max_new_tokens=max_new_tokens,
+            temperature=0.7,
+            do_sample=True,
+        )
+
+    baseline_output = model.generate(
+        tokens,
+        max_new_tokens=max_new_tokens,
+        temperature=0.7,
+        do_sample=True,
+    )
+
+    return {
+        "prompt": prompt,
+        "layer": layer,
+        "direction_norm_before": round(float(norm.item()), 4),
+        "ablated_text": model.to_string(ablated_output[0]),
+        "baseline_text": model.to_string(baseline_output[0]),
+    }
