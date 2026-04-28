@@ -9,6 +9,7 @@ Run with: uvicorn main:app --reload --port 8000
 API docs: http://localhost:8000/docs
 """
 
+import os
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,10 +28,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Allow requests from the React frontend (typically port 3000 or 3001)
+# CORS origins are configurable so the same image runs locally and on HF Spaces.
+# In production, set ALLOWED_ORIGINS to your deployed frontend URL(s), e.g.
+#   ALLOWED_ORIGINS=https://neuroscope.vercel.app,https://preview.neuroscope.vercel.app
+_default_origins = "http://localhost:3000,http://localhost:3001"
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

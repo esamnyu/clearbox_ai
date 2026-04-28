@@ -5,7 +5,9 @@
  * All responses are validated for HTTP status before returning typed data.
  */
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = (
+  import.meta.env.VITE_API_BASE ?? "http://localhost:8000"
+).replace(/\/+$/, "");
 
 // ============================================================================
 // Response Interfaces
