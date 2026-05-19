@@ -5,6 +5,12 @@
 torch==2.3.0
 transformer-lens==2.11.0
 
+# transformer-lens 2.11 imports `transformers.TRANSFORMERS_CACHE` at module
+# load; that attribute was removed in transformers 5.x. Bound the major
+# version. huggingface-hub<1 keeps the legacy 0.x API surface TL expects.
+transformers>=4.37.2,<5.0
+huggingface-hub<1.0
+
 # API
 fastapi==0.115.0
 uvicorn[standard]==0.30.6

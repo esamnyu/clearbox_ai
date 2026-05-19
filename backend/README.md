@@ -24,7 +24,9 @@ Exposes activation-extraction endpoints (logit lens, attention patterns, gradien
 | `POST /gradients` | Token-level gradient magnitudes w.r.t. a target token |
 | `POST /steering-vector` | Difference-of-means vector from contrastive prompts |
 | `POST /generate-steered` | Generation with a steering vector injected at a layer |
+| `POST /ablate-direction` | Generation with a direction projected out of the residual stream (`h' = h − (h·d̂)d̂`) |
 | `POST /pca-trajectories` | 3D PCA of residual stream across layers + tokens |
+| `GET /contrastive-pairs` | Built-in sentiment contrastive prompt pairs |
 
 Interactive docs at `/docs` once the Space is live.
 
