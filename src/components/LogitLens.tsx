@@ -6,13 +6,8 @@ interface LogitLensProps {
   prompt: string;
 }
 
-/** Number of top-k predictions shown per layer column. */
 const TOP_K_DISPLAY = 5;
 
-/**
- * Derive the final-layer top prediction token so we can highlight convergence
- * in earlier layers. Returns null when no data is available.
- */
 function getFinalPrediction(
   predictions: LogitLensResponse["predictions"],
 ): string | null {
@@ -22,14 +17,10 @@ function getFinalPrediction(
   return lastRow.top_k[0].token;
 }
 
-/**
- * Format a layer label for the row header.
- * "Embed" stays as-is; "Layer N" becomes "LN".
- */
 function formatLayerLabel(layer: string): string {
-  if (layer === "Embed") return "Embed";
-  const match = layer.match(/^Layer\s+(\d+)$/);
-  return match ? `L${match[1]}` : layer;
+  if (layer === "Embed") return "embed";
+  const m = layer.match(/^Layer\s+(\d+)$/);
+  return m ? `L${m[1].padStart(2, "0")}` : layer;
 }
 
 export default function LogitLens({ prompt }: LogitLensProps) {
@@ -55,135 +46,132 @@ export default function LogitLens({ prompt }: LogitLensProps) {
     }
   };
 
+  const backendOk = backendStatus === "connected";
+
   return (
-    <section className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Logit Lens</h2>
-
-        <button
-          type="button"
-          disabled={
-            isLoading || backendStatus !== "connected" || !prompt.trim()
-          }
-          onClick={handleRun}
-          className="px-3 py-1.5 text-sm font-medium rounded-md bg-violet-600 hover:bg-violet-500 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {isLoading ? "Analyzing..." : "Run Logit Lens"}
-        </button>
-      </div>
-
-      {/* Backend disconnected warning */}
-      {backendStatus !== "connected" && (
-        <p className="text-sm text-amber-400 mb-4">
-          Start the Python backend to use logit lens analysis
-        </p>
-      )}
-
-      {/* Backend error */}
-      {backendError && (
-        <p className="text-sm text-red-400 mb-4">{backendError}</p>
-      )}
-
-      {/* Loading spinner */}
-      {isLoading && (
-        <div className="flex items-center gap-2 text-sm text-slate-400 mb-4">
-          <svg
-            className="animate-spin h-4 w-4 text-violet-400"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
+    <div className="relative overflow-hidden border border-rule bg-paper">
+      <div className="atmosphere" />
+      <div className="relative p-8 sm:p-10">
+        <header className="mb-6 flex items-baseline justify-between gap-4">
+          <div>
+            <h3 className="label-caps text-graphite">Logit Lens</h3>
+            <p className="mt-1 font-serif text-xs italic text-slate-500">
+              what the model would predict, layer by layer
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={isLoading || !backendOk || !prompt.trim()}
+            onClick={handleRun}
+            className="group inline-flex items-center gap-2 font-display text-sm italic text-cerulean-light transition-colors hover:text-cerulean-light/90 disabled:cursor-not-allowed disabled:text-slate-700"
           >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-          Analyzing...
-        </div>
-      )}
+            <span className="text-base leading-none" aria-hidden>
+              ↪
+            </span>
+            <span className="border-b border-dotted border-cerulean/40 pb-px group-hover:border-cerulean-light group-disabled:border-slate-800">
+              {isLoading ? "reading…" : "run logit lens"}
+            </span>
+          </button>
+        </header>
 
-      {/* Results table */}
-      {!isLoading && logitLensResult && (
-        <div className="overflow-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <th className="text-left font-mono text-xs text-slate-400 pb-2 pr-4 whitespace-nowrap">
-                  Layer
-                </th>
-                {Array.from({ length: TOP_K_DISPLAY }, (_, i) => (
-                  <th
-                    key={i}
-                    className="text-left font-mono text-xs text-slate-500 pb-2 px-2 whitespace-nowrap"
-                  >
-                    #{i + 1}
+        {!backendOk && (
+          <p className="mb-6 font-serif italic text-sm text-vermillion-light">
+            backend unreachable
+          </p>
+        )}
+        {backendError && (
+          <p className="mb-6 font-serif italic text-sm text-vermillion-light">
+            {backendError}
+          </p>
+        )}
+
+        {isLoading && (
+          <p className="font-serif italic text-slate-500">
+            ▍ projecting residuals through unembedding…
+          </p>
+        )}
+
+        {!isLoading && logitLensResult && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b border-rule">
+                  <th className="label-caps pb-3 pr-4 text-left text-slate-500">
+                    layer
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {logitLensResult.predictions.map((row, rowIdx) => (
-                <tr key={rowIdx} className="border-t border-slate-800/50">
-                  {/* Layer label */}
-                  <td className="font-mono text-xs text-slate-400 py-1.5 pr-4 whitespace-nowrap align-top">
-                    {formatLayerLabel(row.layer)}
-                  </td>
-
-                  {/* Top-k prediction cells */}
-                  {Array.from({ length: TOP_K_DISPLAY }, (_, k) => {
-                    const prediction = row.top_k[k] ?? null;
-                    if (!prediction) {
-                      return <td key={k} className="px-2 py-1.5" />;
-                    }
-
-                    const isFinalMatch =
-                      finalToken !== null && prediction.token === finalToken;
-
-                    return (
-                      <td key={k} className="px-2 py-1.5">
-                        <div
-                          className={`inline-flex flex-col items-start px-2 py-1 rounded ${
-                            isFinalMatch
-                              ? "border border-green-500/50"
-                              : "border border-transparent"
-                          }`}
-                          style={{
-                            backgroundColor: `rgba(139, 92, 246, ${prediction.prob})`,
-                          }}
-                          title={`${prediction.token}: ${(prediction.prob * 100).toFixed(1)}%`}
-                        >
-                          <span className="font-mono text-sm text-white leading-tight">
-                            {prediction.token}
-                          </span>
-                          <span className="text-xs text-slate-400 leading-tight">
-                            {(prediction.prob * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </td>
-                    );
-                  })}
+                  {Array.from({ length: TOP_K_DISPLAY }, (_, i) => (
+                    <th
+                      key={i}
+                      className="label-caps pb-3 pl-3 pr-2 text-left text-slate-500"
+                    >
+                      #{i + 1}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {logitLensResult.predictions.map((row, rowIdx) => (
+                  <tr
+                    key={rowIdx}
+                    className="border-b border-rule/40 last:border-b-0"
+                  >
+                    <td className="py-2 pr-4 font-mono text-xs text-slate-400 align-middle whitespace-nowrap">
+                      {formatLayerLabel(row.layer)}
+                    </td>
+                    {Array.from({ length: TOP_K_DISPLAY }, (_, k) => {
+                      const p = row.top_k[k] ?? null;
+                      if (!p) return <td key={k} className="px-3 py-2" />;
 
-      {/* Empty state */}
-      {!isLoading && !logitLensResult && backendStatus === "connected" && (
-        <p className="text-sm text-slate-500 italic">
-          Enter a prompt and run logit lens to see layer-by-layer predictions.
-        </p>
-      )}
-    </section>
+                      const isFinalMatch =
+                        finalToken !== null && p.token === finalToken;
+                      const intensity = Math.max(0.06, p.prob);
+
+                      return (
+                        <td key={k} className="px-3 py-2">
+                          <div
+                            className={
+                              "inline-flex flex-col items-start rounded-sm px-2.5 py-1 " +
+                              (isFinalMatch ? "ring-1 ring-vermillion/70" : "")
+                            }
+                            style={{
+                              backgroundColor: `rgba(56, 116, 156, ${intensity})`,
+                            }}
+                            title={`${p.token}: ${(p.prob * 100).toFixed(1)}%`}
+                          >
+                            <span className="font-mono text-sm leading-tight text-graphite">
+                              {p.token.replace(/^Ġ/, "·")}
+                            </span>
+                            <span className="font-mono text-[0.65rem] leading-tight tabular-nums text-slate-400">
+                              {(p.prob * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {finalToken && (
+              <p className="mt-4 font-serif text-xs italic text-slate-500">
+                <span className="inline-block h-1.5 w-1.5 -translate-y-px rounded-full bg-vermillion mr-2 align-middle" />
+                vermillion ring marks the layer&apos;s match with the final
+                prediction
+                <span className="not-italic font-mono text-graphite">
+                  {" "}
+                  &nbsp;{finalToken.replace(/^Ġ/, "·")}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
+
+        {!isLoading && !logitLensResult && backendOk && (
+          <p className="font-serif italic text-slate-700">
+            run the lens to see predictions stratified by layer
+          </p>
+        )}
+      </div>
+    </div>
   );
 }

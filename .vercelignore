@@ -1,0 +1,25 @@
+# Backend lives on HuggingFace Spaces (lymnal/neuroscope-api).
+# Excluding it stops Vercel from auto-detecting it as a second service
+# AND keeps the deployment artifact small.
+backend/
+
+# Docs are not needed at runtime
+docs/
+
+# Local agent state + caches
+.claude/
+.husky/
+
+# Editor + OS noise
+.idea/
+.vscode/
+.DS_Store
+
+# Binary strategy doc
+RESEARCH_STRATEGY.docx
+
+# Tests aren't part of the prod bundle
+tests/
+
+# Notebooks
+notebooks/

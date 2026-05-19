@@ -1,33 +1,4 @@
-/**
- * NeuroScope-Web - Session 1: Model Loading & Tokenization
- * ==========================================================
- *
- * This is the main application component for Session 1 of NeuroScope-Web.
- * It provides a simple UI to verify that the model loading and tokenization
- * pipeline is working correctly.
- *
- * WHAT THIS FILE DOES:
- * 1. Initializes the Web Worker on mount (for background model loading)
- * 2. Provides a button to load the GPT-2 model (~500MB download)
- * 3. Shows loading progress with a progress bar
- * 4. Allows text input for tokenization
- * 5. Displays tokens and their IDs for verification
- *
- * CHECKPOINT TEST:
- * 1. Click "Load GPT-2" and wait for download
- * 2. Type "Hello world"
- * 3. Click "Tokenize"
- * 4. Verify tokens: ["Hello", " world"]
- * 5. Verify IDs: [15496, 995]
- *
- * ERROR HANDLING:
- * - If model loading fails, an error message is shown with a retry button
- * - If the worker fails to initialize, the error is displayed
- *
- * @module App
- */
-
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useModelStore } from "./store/modelStore";
 import { useAnalysisStore } from "./store/analysisStore";
 import AttentionHeatmap from "./components/AttentionHeatmap";
@@ -43,70 +14,29 @@ interface TelemetryData {
   hiddenStates?: TensorWithMetadata[];
 }
 
-// Compute stats from tensor arrays
-function computeTelemetryStats(telemetry: TelemetryData | null) {
-  if (!telemetry) {
-    return {
-      generatedTokens: 0,
-      attentionTensorCount: 0,
-      hiddenStateTensorCount: 0,
-      uniqueLayers: 0,
-      generationSteps: 0,
-      attentionDataSizeMB: 0,
-      hiddenStateDataSizeMB: 0,
-      totalDataSizeMB: 0,
-    };
-  }
-
-  const attentionTensorCount = telemetry.attentions?.length || 0;
-  const hiddenStateTensorCount = telemetry.hiddenStates?.length || 0;
-
-  // Count unique layers across both tensor types
-  const attentionLayers = new Set(
-    telemetry.attentions?.map((t) => t.layer) || [],
-  );
-  const hiddenStateLayers = new Set(
-    telemetry.hiddenStates?.map((t) => t.layer) || [],
-  );
-  const allLayers = new Set([...attentionLayers, ...hiddenStateLayers]);
-  const uniqueLayers = allLayers.size;
-
-  // Count unique generation steps
-  const attentionSteps = new Set(
-    telemetry.attentions?.map((t) => t.step) || [],
-  );
-  const hiddenStateSteps = new Set(
-    telemetry.hiddenStates?.map((t) => t.step) || [],
-  );
-  const allSteps = new Set([...attentionSteps, ...hiddenStateSteps]);
-  const generationSteps = allSteps.size;
-
-  // Calculate total memory usage
-  const attentionDataSizeMB = telemetry.attentions
-    ? telemetry.attentions.reduce(
-        (sum, t) => sum + t.data.byteLength / (1024 * 1024),
-        0,
-      )
-    : 0;
-
-  const hiddenStateDataSizeMB = telemetry.hiddenStates
-    ? telemetry.hiddenStates.reduce(
-        (sum, t) => sum + t.data.byteLength / (1024 * 1024),
-        0,
-      )
-    : 0;
-
+function computeTelemetryStats(t: TelemetryData | null) {
+  if (!t) return null;
+  const aCount = t.attentions?.length ?? 0;
+  const hCount = t.hiddenStates?.length ?? 0;
+  const layers = new Set([
+    ...(t.attentions?.map((x) => x.layer) ?? []),
+    ...(t.hiddenStates?.map((x) => x.layer) ?? []),
+  ]).size;
+  const steps = new Set([
+    ...(t.attentions?.map((x) => x.step) ?? []),
+    ...(t.hiddenStates?.map((x) => x.step) ?? []),
+  ]).size;
+  const aMB =
+    t.attentions?.reduce((s, x) => s + x.data.byteLength / 1048576, 0) ?? 0;
+  const hMB =
+    t.hiddenStates?.reduce((s, x) => s + x.data.byteLength / 1048576, 0) ?? 0;
   return {
-    generatedTokens: telemetry.tokenIds?.length || 0,
-    attentionTensorCount,
-    hiddenStateTensorCount,
-    uniqueLayers,
-    generationSteps,
-    attentionDataSizeMB: Number(attentionDataSizeMB.toFixed(2)),
-    hiddenStateDataSizeMB: Number(hiddenStateDataSizeMB.toFixed(2)),
-    totalDataSizeMB: Number(
-      (attentionDataSizeMB + hiddenStateDataSizeMB).toFixed(2),
-    ),
+    tokens: t.tokenIds?.length ?? 0,
+    attn: aCount,
+    hidden: hCount,
+    layers,
+    steps,
+    totalMB: Number((aMB + hMB).toFixed(2)),
   };
 }
 
@@ -122,7 +52,6 @@ export default function App() {
   const checkBackend = useAnalysisStore((s) => s.checkBackend);
   const backendStatus = useAnalysisStore((s) => s.backendStatus);
 
-  // Initialize worker and check backend on mount
   useEffect(() => {
     initWorker();
     checkBackend();
@@ -130,206 +59,399 @@ export default function App() {
 
   const handleGenerate = async () => {
     if (status !== "ready") return;
-
     setIsGenerating(true);
-    setGenText("Generating...");
+    setGenText("Generating…");
     setTelemetry(null);
-
     try {
       const result = await generate(prompt);
-
       setGenText(result.text);
       setTelemetry({
         tokenIds: result.tokenIds,
         attentions: result.attentions,
         hiddenStates: result.hiddenStates,
       });
-
-      // Feed results into analysis store for visualization
       analyze(result);
-
-      console.log("INTERPRETABILITY DATA:", result);
     } catch (e) {
       console.error("Generation error:", e);
+      setGenText("");
     } finally {
       setIsGenerating(false);
     }
   };
 
+  const stats = computeTelemetryStats(telemetry);
+
   return (
-    <div className="min-h-screen p-8 max-w-7xl mx-auto bg-slate-950 text-slate-200 font-sans">
-      <h1 className="text-3xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
-        Clearbox AI: Interpretability Interface
-      </h1>
+    <div className="relative min-h-screen overflow-x-hidden bg-ink font-serif text-graphite">
+      <div className="atmosphere" />
 
-      {/* 1. Model Loader */}
-      <section className="mb-8 p-6 bg-slate-900/50 rounded-xl border border-slate-800">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold text-white">Model Status</h2>
-          <span
-            className={`px-2 py-1 rounded text-xs font-mono ${
-              status === "ready"
-                ? "bg-green-900/50 text-green-400"
-                : status === "loading"
-                  ? "bg-blue-900/50 text-blue-400"
-                  : "bg-yellow-900/50 text-yellow-400"
-            }`}
-          >
-            {status.toUpperCase()}
-          </span>
-        </div>
+      <main className="relative mx-auto max-w-[88rem] px-6 pb-32 pt-12 sm:px-10 lg:px-16">
+        <Masthead
+          modelStatus={status}
+          loadProgress={loadProgress}
+          backendStatus={backendStatus}
+          onLoadModel={() => loadModel("Xenova/gpt2")}
+        />
 
-        {status === "idle" && (
-          <button
-            onClick={() => loadModel("Xenova/gpt2")}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
+        <Section number="I" title="Prompt">
+          <PromptInput value={prompt} onChange={setPrompt} />
+          <PrimaryAction
+            onClick={handleGenerate}
+            disabled={status !== "ready" || isGenerating}
+            loading={isGenerating}
           >
-            Load GPT-2 (124M)
-          </button>
+            {status !== "ready"
+              ? "load the model to enable inference"
+              : isGenerating
+                ? "running inference"
+                : "generate & analyze"}
+          </PrimaryAction>
+        </Section>
+
+        {(genText || stats) && (
+          <Section number="II" title="Generation">
+            <GenerationView text={genText} stats={stats} />
+          </Section>
         )}
 
-        {status === "loading" && (
-          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+        <Section number="III" title="Attention">
+          <div className="grid grid-cols-1 gap-10 xl:grid-cols-[1fr_1.15fr]">
+            <HeadGrid />
+            <AttentionHeatmap />
+          </div>
+        </Section>
+
+        <Section number="IV" title="Layer Predictions">
+          <LogitLens prompt={prompt} />
+        </Section>
+
+        <Section number="V" title="Token Importance">
+          <TokenImportance prompt={prompt} />
+        </Section>
+
+        <Section number="VI" title="Intervention">
+          <SteeringPanel prompt={prompt} />
+        </Section>
+
+        <Colophon />
+      </main>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Masthead — wordmark + tagline + connection status + load CTA
+// ──────────────────────────────────────────────────────────────
+
+interface MastheadProps {
+  modelStatus: "idle" | "loading" | "ready" | "error";
+  loadProgress: number;
+  backendStatus: "unknown" | "connected" | "disconnected";
+  onLoadModel: () => void;
+}
+
+function Masthead({
+  modelStatus,
+  loadProgress,
+  backendStatus,
+  onLoadModel,
+}: MastheadProps) {
+  return (
+    <header className="mb-20 pb-8">
+      <div className="flex flex-col items-start gap-2">
+        <span className="label-caps text-vermillion">
+          Mechanistic Interpretability
+          <span className="px-2 text-slate-700">·</span>
+          <span className="text-slate-500">An Open Workbench</span>
+        </span>
+
+        <h1
+          className="font-display text-[3.25rem] leading-[0.95] tracking-[-0.01em] text-graphite sm:text-[4.5rem]"
+          style={{ fontVariationSettings: '"opsz" 144, "SOFT" 30' }}
+        >
+          NeuroScope
+          <span className="font-display italic text-vermillion">.</span>
+        </h1>
+
+        <p className="mt-3 max-w-2xl font-serif text-base italic leading-relaxed text-slate-400 sm:text-lg">
+          A browser-resident reading room for GPT-2&apos;s internals — extract
+          activations, project them out, watch the model change its mind.
+        </p>
+      </div>
+
+      <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-rule pt-5">
+        <StatusInline
+          label="Browser model"
+          status={
+            modelStatus === "ready"
+              ? "good"
+              : modelStatus === "loading"
+                ? "pending"
+                : "down"
+          }
+          detail={
+            modelStatus === "ready"
+              ? "gpt2 · 124M · loaded"
+              : modelStatus === "loading"
+                ? `loading · ${loadProgress.toFixed(0)}%`
+                : modelStatus === "error"
+                  ? "load failed"
+                  : "not loaded"
+          }
+        />
+        <StatusInline
+          label="Backend"
+          status={
+            backendStatus === "connected"
+              ? "good"
+              : backendStatus === "unknown"
+                ? "pending"
+                : "down"
+          }
+          detail={
+            backendStatus === "connected"
+              ? "transformerlens · ready"
+              : backendStatus === "disconnected"
+                ? "unreachable"
+                : "checking…"
+          }
+        />
+
+        {modelStatus === "idle" && (
+          <button
+            type="button"
+            onClick={onLoadModel}
+            className="group ml-auto inline-flex items-center gap-2 font-display text-sm italic text-cerulean-light transition-colors hover:text-cerulean-light/80"
+          >
+            <span className="text-base leading-none">↪</span>
+            <span className="border-b border-dotted border-cerulean/40 pb-px group-hover:border-cerulean-light">
+              load gpt-2 (124M)
+            </span>
+          </button>
+        )}
+        {modelStatus === "loading" && (
+          <div className="ml-auto h-px w-48 overflow-hidden bg-rule">
             <div
-              className="bg-blue-500 h-full transition-all duration-300"
+              className="h-full bg-cerulean transition-all duration-300"
               style={{ width: `${loadProgress}%` }}
             />
           </div>
         )}
-      </section>
+      </div>
+    </header>
+  );
+}
 
-      {/* 2. Experiment Input */}
-      <section className="mb-8 p-6 bg-slate-900/50 rounded-xl border border-slate-800">
-        <h2 className="text-lg font-semibold mb-4 text-white">Input Prompt</h2>
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          className="w-full h-24 p-4 bg-slate-950 border border-slate-700 rounded-lg font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-        />
-        <div className="mt-4 flex gap-4">
-          <button
-            onClick={handleGenerate}
-            disabled={status !== "ready" || isGenerating}
-            className="px-6 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-medium transition-colors"
-          >
-            {isGenerating ? "Running Inference..." : "Generate & Analyze"}
-          </button>
+function StatusInline({
+  label,
+  status,
+  detail,
+}: {
+  label: string;
+  status: "good" | "pending" | "down";
+  detail: string;
+}) {
+  const dotColor =
+    status === "good"
+      ? "bg-emerald-400"
+      : status === "pending"
+        ? "bg-amber-400 animate-pulse"
+        : "bg-vermillion";
+  return (
+    <div className="flex items-baseline gap-3">
+      <span
+        className={`mb-0.5 inline-block h-1.5 w-1.5 rounded-full ${dotColor}`}
+      />
+      <span className="label-caps text-slate-500">{label}</span>
+      <span className="font-mono text-xs text-slate-300">{detail}</span>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Section — Roman numeral + serif title + flex hairline
+// ──────────────────────────────────────────────────────────────
+
+function Section({
+  number,
+  title,
+  children,
+}: {
+  number: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mb-20">
+      <header className="mb-8 flex items-baseline gap-5">
+        <span className="font-display text-2xl italic text-vermillion">
+          {number}.
+        </span>
+        <h2 className="font-display text-2xl tracking-tight text-graphite">
+          {title}
+        </h2>
+        <span className="rule-flex" />
+      </header>
+      {children}
+    </section>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Prompt — large editorial textarea
+// ──────────────────────────────────────────────────────────────
+
+function PromptInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="relative mb-6">
+      <span className="label-caps absolute -top-3 left-0 bg-ink px-2 text-slate-500">
+        prompt
+      </span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={3}
+        className="w-full resize-none border border-rule bg-paper px-5 py-4 font-mono text-base leading-relaxed text-graphite placeholder:italic placeholder:text-slate-700 focus:border-vermillion focus:outline-none"
+        placeholder="type a prompt to investigate…"
+      />
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// PrimaryAction — editorial text-link button
+// ──────────────────────────────────────────────────────────────
+
+function PrimaryAction({
+  onClick,
+  disabled,
+  loading,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  loading: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group inline-flex items-center gap-2 font-display text-base italic text-vermillion-light transition-colors hover:text-vermillion-light/90 disabled:cursor-not-allowed disabled:text-slate-700"
+    >
+      <span className="text-lg leading-none" aria-hidden>
+        {loading ? "·" : "↪"}
+      </span>
+      <span className="border-b border-dotted border-vermillion/40 pb-px group-hover:border-vermillion-light group-disabled:border-slate-800">
+        {children}
+      </span>
+    </button>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// GenerationView — output text + refined telemetry
+// ──────────────────────────────────────────────────────────────
+
+function GenerationView({
+  text,
+  stats,
+}: {
+  text: string;
+  stats: ReturnType<typeof computeTelemetryStats>;
+}) {
+  return (
+    <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1.4fr_1fr]">
+      <div>
+        <div className="mb-4 flex items-center gap-3">
+          <span className="rule-flex" />
+          <span className="label-caps text-cerulean">output</span>
+          <span className="rule-flex" />
         </div>
-      </section>
-
-      {/* 3. Analysis Dashboard */}
-      {genText && (
-        <section className="grid grid-cols-2 gap-6">
-          {/* Output Text */}
-          <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
-            <h3 className="text-sm font-semibold text-slate-400 mb-2">
-              MODEL OUTPUT
-            </h3>
-            <p className="font-mono text-lg leading-relaxed text-white">
-              {genText}
-            </p>
-          </div>
-
-          {/* Telemetry Stats */}
-          <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
-            <h3 className="text-sm font-semibold text-slate-400 mb-2">
-              CIRCUIT TELEMETRY
-            </h3>
-            <div className="space-y-2 text-sm font-mono">
-              {(() => {
-                const stats = computeTelemetryStats(telemetry);
-                return (
-                  <>
-                    <div className="flex justify-between">
-                      <span>Generated Tokens:</span>
-                      <span className="text-blue-400">
-                        {stats.generatedTokens}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Attention Tensors:</span>
-                      <span className="text-green-400">
-                        {stats.attentionTensorCount}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Hidden State Tensors:</span>
-                      <span className="text-purple-400">
-                        {stats.hiddenStateTensorCount}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Unique Layers:</span>
-                      <span className="text-yellow-400">
-                        {stats.uniqueLayers}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Generation Steps:</span>
-                      <span className="text-cyan-400">
-                        {stats.generationSteps}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Total Data Size:</span>
-                      <span className="text-pink-400">
-                        {stats.totalDataSizeMB} MB
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-t border-slate-700 pt-2 mt-2">
-                      <span>Capture Status:</span>
-                      <span
-                        className={`${
-                          stats.attentionTensorCount > 0 ||
-                          stats.hiddenStateTensorCount > 0
-                            ? "text-green-400"
-                            : "text-red-400"
-                        }`}
-                      >
-                        {stats.attentionTensorCount > 0 ||
-                        stats.hiddenStateTensorCount > 0
-                          ? "Success"
-                          : "No Data"}
-                      </span>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* 4. Attention Analysis — HeadGrid + Heatmap linked by selected layer/head */}
-      <div className="mt-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <HeadGrid />
-        <AttentionHeatmap />
-      </div>
-
-      {/* 5. Backend Analysis — Logit Lens + Token Importance */}
-      <div className="mt-6 grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <LogitLens prompt={prompt} />
-        <TokenImportance prompt={prompt} />
-      </div>
-
-      {/* 6. Activation Steering */}
-      <div className="mt-6">
-        <SteeringPanel prompt={prompt} />
-      </div>
-
-      {/* Backend status indicator */}
-      {backendStatus !== "unknown" && (
-        <div className="mt-4 text-xs text-slate-500 font-mono text-right">
-          Backend:{" "}
-          {backendStatus === "connected" ? (
-            <span className="text-green-400">connected</span>
-          ) : (
-            <span className="text-red-400">
-              disconnected (start with: uvicorn main:app --port 8000)
+        <p className="font-mono text-base leading-relaxed text-graphite">
+          {text || (
+            <span className="italic font-serif text-slate-700">
+              awaiting inference
             </span>
           )}
+        </p>
+      </div>
+
+      <div>
+        <div className="mb-4 flex items-center gap-3">
+          <span className="rule-flex" />
+          <span className="label-caps text-vermillion">telemetry</span>
+          <span className="rule-flex" />
         </div>
-      )}
+        {stats ? (
+          <dl className="grid grid-cols-2 gap-x-8 gap-y-2 font-mono text-sm">
+            <Stat k="tokens" v={stats.tokens} />
+            <Stat k="layers" v={stats.layers} />
+            <Stat k="attn tensors" v={stats.attn} />
+            <Stat k="hidden tensors" v={stats.hidden} />
+            <Stat k="gen steps" v={stats.steps} />
+            <Stat k="total memory" v={`${stats.totalMB} MB`} />
+          </dl>
+        ) : (
+          <p className="font-serif italic text-slate-700">
+            run inference to capture activations
+          </p>
+        )}
+      </div>
     </div>
+  );
+}
+
+function Stat({ k, v }: { k: string; v: string | number }) {
+  return (
+    <>
+      <dt className="text-slate-500">{k}</dt>
+      <dd className="text-right tabular-nums text-graphite">{v}</dd>
+    </>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────
+// Colophon — manuscript-style footer
+// ──────────────────────────────────────────────────────────────
+
+function Colophon() {
+  return (
+    <footer className="mt-32 border-t border-rule pt-8">
+      <div className="flex flex-wrap items-baseline justify-between gap-4 font-serif text-xs italic text-slate-500">
+        <div>
+          NeuroScope <span className="not-italic text-slate-700">·</span> set in
+          Fraunces, Newsreader &amp; JetBrains Mono{" "}
+          <span className="not-italic text-slate-700">·</span> for the Anthropic
+          Fellows portfolio
+        </div>
+        <div className="font-mono not-italic">
+          <a
+            href="https://huggingface.co/spaces/lymnal/neuroscope-api"
+            className="text-slate-400 hover:text-vermillion-light"
+            target="_blank"
+            rel="noreferrer"
+          >
+            api
+          </a>
+          <span className="mx-2 text-slate-700">·</span>
+          <a
+            href="https://github.com/lymnal/clearbox_ai"
+            className="text-slate-400 hover:text-vermillion-light"
+            target="_blank"
+            rel="noreferrer"
+          >
+            source
+          </a>
+        </div>
+      </div>
+    </footer>
   );
 }

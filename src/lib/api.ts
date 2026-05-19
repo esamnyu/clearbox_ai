@@ -77,12 +77,18 @@ export interface SteeredGenerationResponse {
   baseline_text: string;
 }
 
+export interface NextTokenTopK {
+  baseline: Array<{ token: string; prob: number }>;
+  ablated: Array<{ token: string; prob: number }>;
+}
+
 export interface AblationResponse {
   prompt: string;
   layer: number;
   direction_norm_before: number;
   ablated_text: string;
   baseline_text: string;
+  next_token_topk?: NextTokenTopK;
 }
 
 export interface PcaTrajectoryPoint {

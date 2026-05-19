@@ -4,13 +4,32 @@
 
 /* Custom base styles */
 @layer base {
+  html {
+    background-color: #0d0e14;
+  }
   body {
     @apply antialiased;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: "Newsreader", ui-serif, Georgia, serif;
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+    background-color: #0d0e14;
+    color: #e9eaf0;
   }
 
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-feature-settings: "ss01" 1, "ss02" 1, "zero" 1;
+  }
+
+  /* Refined focus rings — vermillion hairline, not chunky default */
+  *:focus-visible {
+    outline: 1px solid #bd4931;
+    outline-offset: 2px;
+  }
+
+  /* Text selection — manuscript-margin-correction feel */
+  ::selection {
+    background-color: rgba(189, 73, 49, 0.30);
+    color: #ffffff;
   }
   :root {
     --background: 0 0% 100%;
@@ -88,6 +107,51 @@
   @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
+  }
+
+  /* ─── Editorial design system primitives ─────────────────────── */
+
+  /* Small-caps section label, vermillion or cerulean accent */
+  .label-caps {
+    @apply font-display uppercase tracking-[0.32em] text-[0.65rem];
+  }
+
+  /* Inline horizontal hairline that fills available space */
+  .rule-flex {
+    @apply h-px flex-1 bg-rule;
+  }
+
+  /* Editorial card — used in place of the rounded slate boxes.
+     Less rounded, paper-tone, with a thin hairline border. */
+  .card-paper {
+    background-color: #13141c;
+    border: 1px solid #23252f;
+    border-radius: 4px;
+  }
+
+  /* Atmospheric texture overlay — radial bloom + film grain */
+  .atmosphere {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .atmosphere::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(circle at 12% -5%, rgba(189, 73, 49, 0.18), transparent 38%),
+      radial-gradient(circle at 90% 110%, rgba(56, 116, 156, 0.14), transparent 42%);
+    mix-blend-mode: screen;
+    opacity: 0.7;
+  }
+  .atmosphere::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.9'/></svg>");
+    mix-blend-mode: overlay;
+    opacity: 0.03;
   }
 }
 

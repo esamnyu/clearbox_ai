@@ -4,12 +4,6 @@ import { useAnalysisStore } from "@/store/analysisStore";
 const NUM_LAYERS = 12;
 const NUM_HEADS = 12;
 
-/**
- * Build a 2D attention matrix for a single head from a 3D TensorView.
- *
- * The layer tensor has shape [num_heads, seq_len, seq_len].
- * We extract head `h` by iterating over (i, j) and calling `.get(h, i, j)`.
- */
 function extractHeadMatrix(
   layerTensor: {
     get: (...indices: number[]) => number;
@@ -19,7 +13,6 @@ function extractHeadMatrix(
 ): number[][] {
   const seqLen = layerTensor.shape[1];
   const matrix: number[][] = [];
-
   for (let i = 0; i < seqLen; i++) {
     const row: number[] = [];
     for (let j = 0; j < seqLen; j++) {
@@ -27,7 +20,6 @@ function extractHeadMatrix(
     }
     matrix.push(row);
   }
-
   return matrix;
 }
 
@@ -41,109 +33,127 @@ export default function AttentionHeatmap() {
 
   const matrix = useMemo(() => {
     if (attentions === null) return null;
-
     const layerTensor = attentions.get(selectedLayer);
     if (!layerTensor) return null;
-
     return extractHeadMatrix(layerTensor, selectedHead);
   }, [attentions, selectedLayer, selectedHead]);
 
   return (
-    <section className="p-6 bg-slate-900/50 rounded-xl border border-slate-800">
-      <h2 className="text-lg font-semibold text-white mb-4">
-        Attention Pattern
-      </h2>
+    <div className="relative overflow-hidden border border-rule bg-paper">
+      <div className="atmosphere" />
+      <div className="relative p-8 sm:p-10">
+        <header className="mb-6">
+          <h3 className="label-caps text-graphite">Attention Pattern</h3>
+          <p className="mt-1 font-serif text-xs italic text-slate-500">
+            who looks at whom · single layer, single head
+          </p>
+        </header>
 
-      {/* Layer / Head selectors */}
-      <div className="flex gap-4 mb-6">
-        <label className="flex items-center gap-2 text-sm text-slate-400">
-          Layer
-          <select
+        <div className="mb-7 flex flex-wrap gap-x-6 gap-y-3">
+          <Selector
+            label="layer"
             value={selectedLayer}
-            onChange={(e) => setSelectedLayer(Number(e.target.value))}
-            className="bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded-md px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
-          >
-            {Array.from({ length: NUM_LAYERS }, (_, i) => (
-              <option key={i} value={i}>
-                {i}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex items-center gap-2 text-sm text-slate-400">
-          Head
-          <select
+            onChange={setSelectedLayer}
+            max={NUM_LAYERS - 1}
+          />
+          <Selector
+            label="head"
             value={selectedHead}
-            onChange={(e) => setSelectedHead(Number(e.target.value))}
-            className="bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded-md px-2 py-1 focus:ring-2 focus:ring-blue-500 outline-none"
-          >
-            {Array.from({ length: NUM_HEADS }, (_, i) => (
-              <option key={i} value={i}>
-                {i}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {/* Content */}
-      {attentions === null || matrix === null ? (
-        <p className="text-sm text-slate-500 italic">
-          Run inference with attention capture to view the heatmap.
-        </p>
-      ) : (
-        <div className="overflow-auto">
-          {/* Grid wrapper: row labels column + heatmap columns */}
-          <div
-            className="inline-grid gap-px"
-            style={{
-              gridTemplateColumns: `auto repeat(${tokens.length}, minmax(28px, 1fr))`,
-              gridTemplateRows: `auto repeat(${tokens.length}, minmax(28px, 1fr))`,
-            }}
-          >
-            {/* Top-left empty corner cell */}
-            <div />
-
-            {/* Column headers (key tokens — "attending TO") */}
-            {tokens.map((token, j) => (
-              <div
-                key={`col-${j}`}
-                className="text-xs font-mono text-slate-400 flex items-end justify-center pb-1"
-                style={{
-                  writingMode: "vertical-rl",
-                  transform: "rotate(180deg)",
-                  height: "60px",
-                }}
-              >
-                <span className="truncate max-w-[56px]">{token}</span>
-              </div>
-            ))}
-
-            {/* Rows */}
-            {matrix.map((row, i) => (
-              <Fragment key={`row-${i}`}>
-                {/* Row label (query token — "attending FROM") */}
-                <div className="text-xs font-mono text-slate-400 flex items-center justify-end pr-2 whitespace-nowrap">
-                  <span className="truncate max-w-[72px]">{tokens[i]}</span>
-                </div>
-
-                {/* Heatmap cells */}
-                {row.map((weight, j) => (
-                  <div
-                    key={`cell-${i}-${j}`}
-                    className="min-w-[28px] min-h-[28px] rounded-sm"
-                    style={{
-                      backgroundColor: `rgba(59, 130, 246, ${weight})`,
-                    }}
-                    title={`[${i}, ${j}] ${weight.toFixed(4)}`}
-                  />
-                ))}
-              </Fragment>
-            ))}
-          </div>
+            onChange={setSelectedHead}
+            max={NUM_HEADS - 1}
+          />
         </div>
-      )}
-    </section>
+
+        {attentions === null || matrix === null ? (
+          <p className="font-serif italic text-slate-700">
+            run inference with attention capture to view the heatmap
+          </p>
+        ) : (
+          <div className="overflow-auto">
+            <div
+              className="inline-grid gap-px"
+              style={{
+                gridTemplateColumns: `auto repeat(${tokens.length}, minmax(26px, 1fr))`,
+                gridTemplateRows: `auto repeat(${tokens.length}, minmax(26px, 1fr))`,
+              }}
+            >
+              <div />
+              {tokens.map((token, j) => (
+                <div
+                  key={`col-${j}`}
+                  className="flex items-end justify-center pb-1 font-mono text-[0.65rem] text-slate-400"
+                  style={{
+                    writingMode: "vertical-rl",
+                    transform: "rotate(180deg)",
+                    height: "64px",
+                  }}
+                >
+                  <span className="max-w-[56px] truncate">{token}</span>
+                </div>
+              ))}
+              {matrix.map((row, i) => (
+                <Fragment key={`row-${i}`}>
+                  <div className="flex items-center justify-end whitespace-nowrap pr-3 font-mono text-[0.7rem] text-slate-400">
+                    <span className="max-w-[72px] truncate">{tokens[i]}</span>
+                  </div>
+                  {row.map((weight, j) => (
+                    <div
+                      key={`cell-${i}-${j}`}
+                      className="min-h-[26px] min-w-[26px]"
+                      style={{
+                        backgroundColor: `rgba(56, 116, 156, ${Math.max(0.05, weight)})`,
+                      }}
+                      title={`[${i}, ${j}] ${weight.toFixed(4)}`}
+                    />
+                  ))}
+                </Fragment>
+              ))}
+            </div>
+            <p className="mt-5 font-serif text-xs italic text-slate-500">
+              rows: querying token · columns: attended-to token · intensity ∝
+              weight
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Selector({
+  label,
+  value,
+  onChange,
+  max,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  max: number;
+}) {
+  return (
+    <label className="inline-flex items-baseline gap-3">
+      <span className="label-caps text-slate-500">{label}</span>
+      <span className="relative">
+        <select
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="appearance-none border-b border-dotted border-rule bg-transparent px-1 pr-5 py-0.5 font-display text-base text-graphite focus:border-vermillion focus:outline-none"
+          style={{ fontVariationSettings: '"opsz" 144' }}
+        >
+          {Array.from({ length: max + 1 }, (_, i) => (
+            <option key={i} value={i} className="bg-paper text-graphite">
+              {i}
+            </option>
+          ))}
+        </select>
+        <span
+          className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-xs text-slate-500"
+          aria-hidden
+        >
+          ▾
+        </span>
+      </span>
+    </label>
   );
 }
