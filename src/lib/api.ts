@@ -69,6 +69,11 @@ export interface ContrastivePairsResponse {
   count: number;
 }
 
+export interface RefusalPairsResponse {
+  pairs: Array<{ harmful: string; harmless: string }>;
+  count: number;
+}
+
 export interface SteeredGenerationResponse {
   prompt: string;
   layer: number;
@@ -214,6 +219,11 @@ export function getSteeringVector(
 /** GET /contrastive-pairs — Fetch built-in contrastive prompt pairs. */
 export function getContrastivePairs(): Promise<ContrastivePairsResponse> {
   return fetchJson<ContrastivePairsResponse>(`${API_BASE}/contrastive-pairs`);
+}
+
+/** GET /refusal-pairs — Fetch curated refusal-direction contrastive pairs. */
+export function getRefusalPairs(): Promise<RefusalPairsResponse> {
+  return fetchJson<RefusalPairsResponse>(`${API_BASE}/refusal-pairs`);
 }
 
 /** POST /generate-steered — Generate text with a steering vector applied. */

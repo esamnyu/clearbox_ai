@@ -6,7 +6,18 @@ import HeadGrid from "./components/HeadGrid";
 import LogitLens from "./components/LogitLens";
 import TokenImportance from "./components/TokenImportance";
 import SteeringPanel from "./components/SteeringPanel";
+import RefusalBenchLeaderboard from "./components/RefusalBenchLeaderboard";
+import { getRefusalPairs } from "./lib/api";
 import type { TensorWithMetadata } from "./engine/types";
+
+const ALL_BENCH_TECHNIQUES = [
+  "arditi",
+  "cheng",
+  "cosmic",
+  "herring",
+  "maskey",
+  "wollschlager",
+];
 
 interface TelemetryData {
   tokenIds: number[];
@@ -51,11 +62,32 @@ export default function App() {
   const analyze = useAnalysisStore((s) => s.analyze);
   const checkBackend = useAnalysisStore((s) => s.checkBackend);
   const backendStatus = useAnalysisStore((s) => s.backendStatus);
+  const steeringLayer = useAnalysisStore((s) => s.steeringLayer);
+
+  const [refusalHarmful, setRefusalHarmful] = useState<string[]>([]);
+  const [refusalHarmless, setRefusalHarmless] = useState<string[]>([]);
 
   useEffect(() => {
     initWorker();
     checkBackend();
   }, [initWorker, checkBackend]);
+
+  useEffect(() => {
+    // Fetch refusal pairs once the backend is reachable. The endpoint
+    // returns count=0 until backend/refusal_pairs.py is populated by
+    // running backend/scripts/build_refusal_pairs.py locally.
+    if (backendStatus !== "connected") return;
+    if (refusalHarmful.length > 0 || refusalHarmless.length > 0) return;
+    getRefusalPairs()
+      .then((res) => {
+        setRefusalHarmful(res.pairs.map((p) => p.harmful));
+        setRefusalHarmless(res.pairs.map((p) => p.harmless));
+      })
+      .catch(() => {
+        // Endpoint may 404 on older deploys or return empty before
+        // population; surface the empty-state UI either way.
+      });
+  }, [backendStatus, refusalHarmful.length, refusalHarmless.length]);
 
   const handleGenerate = async () => {
     if (status !== "ready") return;
@@ -131,6 +163,15 @@ export default function App() {
 
         <Section number="VI" title="Intervention">
           <SteeringPanel prompt={prompt} />
+        </Section>
+
+        <Section number="VII" title="Refusal Bench">
+          <RefusalBenchLeaderboard
+            layer={steeringLayer}
+            harmfulPrompts={refusalHarmful}
+            harmlessPrompts={refusalHarmless}
+            techniqueNames={ALL_BENCH_TECHNIQUES}
+          />
         </Section>
 
         <Colophon />
