@@ -15,7 +15,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py model.py research.py ./
+# Copy all backend modules (.dockerignore excludes __pycache__, .venv, etc.):
+#   main.py, model.py, research.py, refusal_pairs.py, over_refusal_pairs.py
+#   refusal_bench/ (the bench harness + 6 techniques + harmfulness probe)
+#   scripts/ (the data build scripts; not invoked at runtime but committed)
+COPY . .
 
 RUN mkdir -p /app/.cache/huggingface && chmod -R 777 /app/.cache
 
