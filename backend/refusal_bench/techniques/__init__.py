@@ -9,15 +9,16 @@ here by importing and registering them in TECHNIQUES below.
 from .arditi import Arditi
 from .cheng import Cheng
 from .cosmic import Cosmic
+from .wollschlager import Wollschlager
 
 TECHNIQUES = {
     "arditi": Arditi,
     "cheng": Cheng,
     "cosmic": Cosmic,
+    "wollschlager": Wollschlager,
     # Wave 2 still to populate:
-    #   "wollschlager": Wollschlager,
     #   "maskey": Maskey,
     #   "herring": HerringCNA,
 }
 
-__all__ = ["TECHNIQUES", "Arditi", "Cheng", "Cosmic"]
+__all__ = ["TECHNIQUES", "Arditi", "Cheng", "Cosmic", "Wollschlager"]
