@@ -91,6 +91,30 @@ export interface AblationResponse {
   next_token_topk?: NextTokenTopK;
 }
 
+export interface TechniqueResult {
+  name: string;
+  paper_url: string;
+  layer_used: number;
+  refusal_rate_baseline: number;
+  refusal_rate_ablated: number;
+  delta_refusal_rate: number;
+  harmfulness_auc_pre: number;
+  harmfulness_auc_post: number;
+  delta_auc: number;
+  elapsed_seconds: number;
+  error: string | null;
+}
+
+export interface BenchResult {
+  model_name: string;
+  layer: number;
+  n_extraction_pairs: number;
+  n_eval_prompts: number;
+  probe_train_auc: number;
+  probe_test_auc: number;
+  results: TechniqueResult[];
+}
+
 export interface PcaTrajectoryPoint {
   token: string;
   token_idx: number;
@@ -229,4 +253,24 @@ export function ablateDirection(
     layer,
     max_new_tokens: maxNewTokens,
   });
+}
+
+/**
+ * POST /refusal-bench — Head-to-head Refusal Bench.
+ *
+ * Trains a shared harmfulness probe on the extraction split, then loops over
+ * every requested technique and scores it on the held-out eval split.
+ * The two-axis result (Δ refusal-rate vs Δ AUC) is the headline novelty.
+ */
+export function runBench(req: {
+  technique_names: string[];
+  layer: number;
+  harmful_prompts: string[];
+  harmless_prompts: string[];
+  test_fraction?: number;
+  max_new_tokens?: number;
+  temperature?: number;
+  seed?: number;
+}): Promise<BenchResult> {
+  return postJson<BenchResult>("/refusal-bench", { ...req });
 }
