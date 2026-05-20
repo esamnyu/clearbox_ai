@@ -24,6 +24,8 @@ from refusal_bench.harmfulness_probe import (
     extract_with_ablation,
     train_probe,
 )
+from refusal_bench.runner import run_bench, serialize as serialize_bench
+from refusal_bench.techniques import TECHNIQUES
 
 # -----------------------------------------------------------------------------
 # App Setup
@@ -101,6 +103,28 @@ class AblationRequest(BaseModel):
     )
     layer: int = Field(default=6, ge=0, le=27, description="Layer for ablation")
     max_new_tokens: int = Field(default=30, ge=1, le=100)
+
+
+class RefusalBenchRequest(BaseModel):
+    """
+    Run the Refusal Bench: a head-to-head comparison of refusal-ablation
+    techniques on the loaded model, scored by refusal rate + harmfulness-
+    probe AUC.
+
+    techniques: subset of refusal_bench.techniques.TECHNIQUES keys
+        (e.g. ["arditi", "cosmic", "cheng", "wollschlager"]).
+    layer: residual-stream layer for extraction + ablation.
+    harmful_prompts/harmless_prompts: contrastive pairs. The runner
+        splits 80/20 (configurable) into extraction + eval folds.
+    """
+    technique_names: List[str] = Field(..., min_length=1)
+    layer: int = Field(ge=0, le=27)
+    harmful_prompts: List[str] = Field(..., min_length=5)
+    harmless_prompts: List[str] = Field(..., min_length=5)
+    test_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
+    max_new_tokens: int = Field(default=32, ge=1, le=128)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    seed: int = Field(default=42, ge=0)
 
 
 class HarmfulnessProbeRequest(BaseModel):
@@ -339,6 +363,55 @@ async def harmfulness_probe(req: HarmfulnessProbeRequest):
             response["post_ablation_mean_p_harm"] = post_eval["mean_p_harm"]
 
         return response
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/refusal-bench/techniques")
+async def list_bench_techniques():
+    """List the refusal-ablation techniques registered in the bench."""
+    return {
+        "techniques": [
+            {
+                "key": key,
+                "name": cls.name,
+                "paper_url": cls.paper_url,
+            }
+            for key, cls in sorted(TECHNIQUES.items())
+        ],
+        "count": len(TECHNIQUES),
+    }
+
+
+@app.post("/refusal-bench")
+async def refusal_bench(req: RefusalBenchRequest):
+    """
+    Run the Refusal Bench end-to-end.
+
+    Trains a shared harmfulness probe on the extraction split, then loops
+    over every requested technique, fits it on the same extraction data,
+    and scores it with refusal-rate (keyword-based) + probe AUC on the
+    held-out eval split. Returns one row per technique.
+
+    Two-axis story: a technique with high |Δ refusal rate| but low |Δ AUC|
+    has suppressed verbal refusal without removing the model's internal
+    harmfulness representation — the Zhao 2507.11878 dissociation, here
+    measured across multiple ablation methods.
+    """
+    try:
+        _validate_layer(req.layer)
+
+        result = run_bench(
+            technique_names=req.technique_names,
+            layer=req.layer,
+            harmful_prompts=req.harmful_prompts,
+            harmless_prompts=req.harmless_prompts,
+            test_fraction=req.test_fraction,
+            max_new_tokens=req.max_new_tokens,
+            temperature=req.temperature,
+            seed=req.seed,
+        )
+        return serialize_bench(result)
     except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
