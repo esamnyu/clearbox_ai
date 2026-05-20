@@ -143,7 +143,11 @@ def rewrite_refusal_pairs_file(pairs: List[Tuple[str, str]]) -> None:
             "couldn't find REFUSAL_PAIRS literal in refusal_pairs.py — "
             "file structure may have changed"
         )
-    REFUSAL_PAIRS_PATH.write_text(pattern.sub(new_block, src))
+    # Callable replacement so re.sub doesn't process backslash escapes in
+    # the new_block (Alpaca prompts contain real newlines whose repr()
+    # output is '\\n' — re.sub would convert that back to a real newline,
+    # producing a SyntaxError when Python parses the file).
+    REFUSAL_PAIRS_PATH.write_text(pattern.sub(lambda _m: new_block, src))
 
 
 def main() -> int:

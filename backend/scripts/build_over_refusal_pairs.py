@@ -155,7 +155,9 @@ def rewrite_over_refusal_pairs_file(prompts: List[str]) -> None:
             "couldn't find OVER_REFUSAL_PROMPTS literal in over_refusal_pairs.py — "
             "file structure may have changed"
         )
-    OVER_REFUSAL_PAIRS_PATH.write_text(pattern.sub(new_block, src))
+    # Callable replacement so re.sub doesn't process backslash escapes from
+    # repr() output (same trap as build_refusal_pairs.py).
+    OVER_REFUSAL_PAIRS_PATH.write_text(pattern.sub(lambda _m: new_block, src))
 
 
 def main() -> int:
