@@ -64,35 +64,30 @@ def load_xstest(n: int) -> List[str]:
     """
     Pull XSTest safe prompts. Returns plain prompt strings.
 
-    XSTest has two columns of interest:
-      - "type": category (e.g. "homonyms", "figurative_language")
-      - "prompt": the user-facing text
-    plus a "label" / "type" suffix marking safe vs unsafe. We keep
-    safe-only.
+    XSTest v2 schema (verified against `natolambert/xstest-v2-copy`):
+      - "type": category name. Safe variants use bare names like
+        "homonyms", "figurative_language", "safe_targets", etc.
+        Unsafe variants are prefixed "contrast_", e.g. "contrast_homonyms".
+      - "prompt": the user-facing text.
+    We keep only the non-contrast (safe) rows — these are the
+    benign-but-edgy prompts that trigger over-refusal in safety-tuned
+    chat models.
     """
     ds = load_dataset(XSTEST_DATASET_NAME, split="prompts")
-    # XSTest's prompt-level labels live in a column called "type" with values
-    # ending in "_safe" vs the unsafe counterparts. The split varies by mirror;
-    # be defensive and accept either column name.
-    label_col = None
-    for candidate in ("label", "type", "category"):
-        if candidate in ds.column_names:
-            label_col = candidate
-            break
-    if label_col is None:
+    if "type" not in ds.column_names or "prompt" not in ds.column_names:
         raise RuntimeError(
-            f"xstest dataset missing expected label column; saw: {ds.column_names}"
+            f"xstest dataset missing expected columns; saw: {ds.column_names}"
         )
 
     prompts: List[str] = []
     for row in ds:
-        label = str(row[label_col])
-        # XSTest safe prompts are labeled either "safe" (when split label/type
-        # is present) or end with "_safe" suffix in the type column. Accept both.
-        if label == "safe" or label.endswith("_safe"):
-            text = row.get("prompt") or row.get("text") or row.get("question")
-            if text:
-                prompts.append(text.strip())
+        type_label = str(row["type"])
+        # safe variants don't carry the "contrast_" prefix
+        if type_label.startswith("contrast_"):
+            continue
+        text = row["prompt"]
+        if text:
+            prompts.append(text.strip())
 
     if not prompts:
         raise RuntimeError(
