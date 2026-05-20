@@ -8,12 +8,62 @@ The research questions and analysis logic are Moon's - we just swapped
 the plumbing from raw HuggingFace to TransformerLens.
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import Callable, List, Dict, Any, Tuple
 import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
-from model import get_model, run_with_cache
+from model import get_model, get_model_name, run_with_cache
+
+
+# -----------------------------------------------------------------------------
+# Chat template helper
+# -----------------------------------------------------------------------------
+# Llama-3.2-*-Instruct expects prompts wrapped in special chat tokens
+# (<|begin_of_text|>, <|start_header_id|>user<|end_header_id|>, ...).
+# Refusal behavior in particular only fires inside that envelope — raw
+# prompts will not produce realistic refusals. Base models like gpt2-small
+# have no chat template, so we no-op there.
+
+def apply_chat_template(prompt: str) -> str:
+    """
+    Wrap `prompt` in the loaded model's chat template if it's instruct-tuned.
+
+    Detection is name-based ("Instruct" / "instruct" in the model name).
+    For non-instruct models the prompt is returned unchanged, so existing
+    GPT-2 behavior is preserved.
+
+    Call this from generation paths (steering, refusal-direction ablation)
+    and from contrastive-vector extraction on instruct models. Do NOT call
+    it from logit_lens / attention / gradients — those probe raw
+    representations and should see the prompt as-is.
+    """
+    name = get_model_name() or ""
+    if "instruct" not in name.lower():
+        return prompt
+    tokenizer = get_model().tokenizer
+    return tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Shared ablation hook
+# -----------------------------------------------------------------------------
+# Used by `ablate_along_direction` (UI side-by-side generation) and by
+# refusal_bench.harmfulness_probe.extract_with_ablation (probe scoring).
+# Single source of truth for h' = h - (h · d̂) d̂.
+
+def make_ablation_hook(unit_direction: torch.Tensor) -> Callable:
+    """Build a TransformerLens fwd hook that removes the projection along d̂."""
+    def ablation_hook(activation, hook):
+        # activation: [batch, seq_len, d_model]
+        coeffs = (activation * unit_direction).sum(dim=-1, keepdim=True)
+        activation[:, :, :] = activation - coeffs * unit_direction
+        return activation
+    return ablation_hook
 
 
 # -----------------------------------------------------------------------------
@@ -359,7 +409,9 @@ def generate_steered(
     """
     model = get_model()
 
-    tokens = model.to_tokens(prompt)
+    # Llama-Instruct needs the chat-template envelope to behave realistically.
+    formatted = apply_chat_template(prompt)
+    tokens = model.to_tokens(formatted)
 
     steering_tensor = torch.tensor(steering_vector, dtype=torch.float32, device=model.cfg.device)
 
@@ -435,15 +487,11 @@ def ablate_along_direction(
         raise RuntimeError("direction has near-zero norm; cannot ablate")
     unit_direction = direction_tensor / norm
 
-    tokens = model.to_tokens(prompt)
+    # Llama-Instruct needs the chat-template envelope to behave realistically.
+    formatted = apply_chat_template(prompt)
+    tokens = model.to_tokens(formatted)
 
-    def ablation_hook(activation, hook):
-        # activation shape: [batch, seq_len, d_model]
-        # Project each position's residual onto d̂, subtract that component.
-        coeffs = (activation * unit_direction).sum(dim=-1, keepdim=True)
-        activation[:, :, :] = activation - coeffs * unit_direction
-        return activation
-
+    ablation_hook = make_ablation_hook(unit_direction)
     hook_name = f"blocks.{layer}.hook_resid_post"
 
     with model.hooks(fwd_hooks=[(hook_name, ablation_hook)]):
