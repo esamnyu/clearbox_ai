@@ -74,6 +74,44 @@ Two reasons to switch from 3B → 1B as primary, with 3B as confirmation:
 
 ---
 
+## Update — May 19 2026 (novelty audit)
+
+Three weeks after the April 28 refresh, the literature moved enough to require another correction. Sources: arxiv submissions Apr 28 → May 19, LessWrong / Alignment Forum, ICLR 2026 OpenReview, ICML 2026 mech-interp workshop call.
+
+### Closest competing work
+
+- **Herring, Naviasky, Malhotra — "Targeted Neuron Modulation via Contrastive Pair Search" ([arxiv 2605.12290](https://arxiv.org/abs/2605.12290), May 12 2026).** Tests Llama-3.2-1B and 3B. Ablates ~0.1% of MLP neurons identified via contrastive pair search. Baselines against Arditi single-direction with keyword + StrongREJECT scoring. **Closest scoop on the bench's Llama-3.2-1B × residual-direction-vs-neuron-ablation cell.** Add as a 6th technique.
+
+### Other new papers worth citing
+
+- [Kim & Han 2026](https://arxiv.org/abs/2605.09875) — anchor-projected cross-family transfer.
+- [Rumbelow 2026](https://arxiv.org/abs/2605.14347) — Exemplar Partitioning, Gemma-2-2B refusal localization.
+- [Chen et al. 2026](https://arxiv.org/abs/2605.08277) — many-shot jailbreak with one demonstration.
+- [Kumar & Ahuja 2026](https://arxiv.org/abs/2605.00123) — minimal local causal jailbreak explanations.
+- [Nanfack et al. 2026](https://arxiv.org/abs/2603.04355) — Optimal Transport refusal ablation.
+- [Petrov 2026](https://arxiv.org/abs/2603.22061) — topic-matched contrast failures.
+- [Llorente-Saguer 2026](https://arxiv.org/abs/2603.27412) — LatentBiopsy harmfulness anomaly detection (most relevant to the harmfulness-probe novelty).
+- [Cristofano 2026](https://arxiv.org/abs/2601.08489) — Surgical Refusal Ablation (Jan 2026 prior art).
+- [Yin et al. 2025](https://arxiv.org/abs/2510.06036) — "Refusal Falls off a Cliff" (ICLR 2026 in-review).
+- [Shah et al. 2025](https://arxiv.org/abs/2507.21141) — harmfulness subconcept probing (methodological cousin of Zhao).
+- [Anonymous 2025](https://arxiv.org/abs/2510.02768) — Safety Pretraining under Abliteration.
+- [Young 2025](https://arxiv.org/abs/2512.13655) — abliteration-toolkit comparison (Dec 2025 engineering prior art).
+- [Piras et al. 2025](https://arxiv.org/abs/2511.08379) — SOM-based multi-directional refusal.
+
+### Strategic adjustments
+
+1. **Add Herring CNA as the 6th technique** in the bench (already in progress).
+2. **Lead the writeup on the harmfulness-probe scoring metric**, not the methodological comparison. None of the 6 candidate techniques are scored with a Zhao-style residual-stream probe in published work — this is the actually-novel claim.
+3. **Add Gemma-2-2B-it as secondary model.** Cross-family transfer (Llama vs Gemma) is high-signal. Same-family 1B vs 3B is low-signal given Cheng 2604.08524 and the IvanC LessWrong post.
+4. **De-emphasize rank-k replication.** Wollschlager + IvanC + SOM + Cheng + Herring have collectively saturated the "single-direction insufficient" finding.
+5. **Adversarial robustness as stretch goal**: re-score after past-tense reformulation ([arxiv 2407.11969](https://arxiv.org/abs/2407.11969)) to test whether technique ranking holds under prompt perturbation.
+
+### Honest assessment
+
+The bench survives the April 28 → May 19 window with the harmfulness-probe framing intact. Without the adjustments above, expect a reviewer to surface arxiv 2605.12290 and ask "what does this add?"
+
+---
+
 ## 1. What's Changed Since Your Jan 2026 Strategy Doc
 
 ### The refusal-direction story is now multi-paper
@@ -265,6 +303,24 @@ These need answers before Week 1 starts. Calling them out explicitly because Jan
 - [Geiger et al., JMLR 2025 — Causal Abstraction](https://jmlr.org/papers/v26/23-0058.html)
 - [Chen et al., Sept 2025 — Persona Vectors](https://arxiv.org/abs/2507.21509)
 - [Ferrando et al., ICLR 2025 — Do I Know This Entity?](https://arxiv.org/abs/2411.14257)
+- [Herring, Naviasky, Malhotra, May 2026 — Targeted Neuron Modulation via Contrastive Pair Search](https://arxiv.org/abs/2605.12290) — Llama-3.2-1B/3B, ~0.1% MLP neurons; closest scoop on the bench's residual-vs-neuron cell
+- [Llorente-Saguer 2026 — LatentBiopsy](https://arxiv.org/abs/2603.27412) — residual-stream harmfulness anomaly detection; methodological cousin of Zhao
+- [Shah et al. 2025 — Harmfulness Subconcept Probing](https://arxiv.org/abs/2507.21141) — methodological cousin of Zhao
+- [Yin et al. 2025 — Refusal Falls off a Cliff](https://arxiv.org/abs/2510.06036) (ICLR 2026 in-review)
+- [Cristofano, Jan 2026 — Surgical Refusal Ablation](https://arxiv.org/abs/2601.08489) — Jan 2026 prior art
+- [Nanfack et al. 2026 — Optimal Transport Refusal Ablation](https://arxiv.org/abs/2603.04355)
+- [Kim & Han 2026 — Anchor-Projected Cross-Family Transfer](https://arxiv.org/abs/2605.09875)
+- [Rumbelow 2026 — Exemplar Partitioning](https://arxiv.org/abs/2605.14347) — Gemma-2-2B refusal localization
+- [Piras et al. 2025 — SOM-Based Multi-Directional Refusal](https://arxiv.org/abs/2511.08379)
+- [Petrov 2026 — Topic-Matched Contrast Failures](https://arxiv.org/abs/2603.22061)
+- [Anonymous 2025 — Safety Pretraining under Abliteration](https://arxiv.org/abs/2510.02768)
+- [Young 2025 — Abliteration-Toolkit Comparison](https://arxiv.org/abs/2512.13655) — Dec 2025 engineering prior art
+
+### Adversarial / jailbreaks
+
+- [Chen et al. 2026 — Many-Shot Jailbreak with One Demonstration](https://arxiv.org/abs/2605.08277)
+- [Kumar & Ahuja 2026 — Minimal Local Causal Jailbreak Explanations](https://arxiv.org/abs/2605.00123)
+- [Past-Tense Reformulation Attack](https://arxiv.org/abs/2407.11969) — used as stretch-goal robustness check
 
 ### Circuits & attribution graphs
 
@@ -299,3 +355,5 @@ These need answers before Week 1 starts. Calling them out explicitly because Jan
 *Compiled from three parallel research streams (landscape / tooling / adjacent directions) on April 17, 2026. Supersedes tactical recommendations in `RESEARCH_STRATEGY.md` where they conflict; preserves the overall research framing.*
 
 *Amended April 28, 2026: see "Update — April 28 2026" near the top. Adds Cheng 2604.08524, Maskey 2603.27518, Joad 2602.02132. Reorders predictions (harmfulness probe leads). Switches primary target to Llama-3.2-1B. Reflects that the deploy infrastructure and ablation primitive are now built.*
+
+*Amended May 19, 2026: see "Update — May 19 2026 (novelty audit)" near the top. Adds Herring CNA 2605.12290 as the 6th bench technique and closest competing work. Leads the writeup on the harmfulness-probe scoring metric (the actually-novel claim) rather than the methodological comparison. Adds Gemma-2-2B-it as secondary model for cross-family transfer. Appends 13 new citations to §6.*
