@@ -154,7 +154,10 @@ class Wollschlager(Technique):
     def _make_cone_hook(self, directions: torch.Tensor) -> Callable:
         """Closure that projects every stored direction out of the residual stream."""
 
-        def hook(activation, hook_):
+        # TransformerLens passes the hook point as keyword arg `hook=...`,
+        # so the parameter MUST be named `hook` (not `hook_`). Matching the
+        # convention in research.make_ablation_hook.
+        def cone_ablation_hook(activation, hook):
             # activation: [batch, seq_len, d_model]
             # directions: [k, d_model], orthonormal
             h = activation
@@ -164,7 +167,7 @@ class Wollschlager(Technique):
             activation[:, :, :] = h
             return activation
 
-        return hook
+        return cone_ablation_hook
 
     def make_ablation_hook(self) -> Tuple[str, Callable]:
         if not self._fitted or self._directions is None or self._layer is None:

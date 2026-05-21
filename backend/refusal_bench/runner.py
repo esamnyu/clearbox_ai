@@ -169,6 +169,7 @@ def run_bench(
     harmful_prompts: List[str],
     harmless_prompts: List[str],
     *,
+    over_refusal_prompts: Optional[List[str]] = None,
     test_fraction: float = 0.2,
     max_new_tokens: int = 32,
     temperature: float = 0.7,
@@ -185,6 +186,10 @@ def run_bench(
             via fit() — that's recorded in `layer_used`).
         harmful_prompts: contrastive prompts the model should refuse.
         harmless_prompts: contrastive prompts the model should comply with.
+        over_refusal_prompts: optional third set of benign-but-edgy prompts
+            (XSTest-style). Maskey needs this to extract the over-refusal
+            direction and subtract it from the harmful direction. Other
+            techniques ignore it.
         test_fraction: portion held out for eval (default 0.2).
         max_new_tokens: completion length budget for refusal-rate measurement.
         temperature: sampling temperature for generation.
@@ -243,6 +248,18 @@ def run_bench(
 
         try:
             technique = TECHNIQUES[tname]()
+
+            # Techniques that need a third prompt set (currently only Maskey)
+            # expose `set_over_refusal(prompts)`; call it before fit if so.
+            if hasattr(technique, "set_over_refusal"):
+                if not over_refusal_prompts:
+                    raise RuntimeError(
+                        f"{tname} requires over_refusal_prompts but none "
+                        f"were passed to run_bench. Populate over_refusal_pairs "
+                        f"and pass via the over_refusal_prompts kwarg."
+                    )
+                technique.set_over_refusal(over_refusal_prompts)  # type: ignore[attr-defined]
+
             technique.fit(model, extraction_harmful, extraction_harmless, layer)
             hook_name, hook_fn = technique.make_ablation_hook()
 
