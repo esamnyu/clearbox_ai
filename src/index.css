@@ -129,6 +129,73 @@
     border-radius: 4px;
   }
 
+  /* ─── Defined term (footnote) popover ───────────────────────── */
+  /* Inline term with a dotted underline + a slate-500 superscript
+     dagger. On hover/focus/pin a paper-tone popover fades in beneath
+     the term with the definition in italic Newsreader. */
+  .defined-term__trigger {
+    text-decoration: underline dotted #475569;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 4px;
+    transition: text-decoration-color 160ms ease;
+  }
+  .defined-term:hover .defined-term__trigger,
+  .defined-term__trigger:focus-visible,
+  .defined-term__trigger[aria-expanded="true"] {
+    text-decoration-color: #bd4931;
+  }
+  .defined-term__popover {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: 0;
+    z-index: 30;
+    display: block;
+    width: min(320px, 88vw);
+    padding: 0.875rem 1rem;
+    background-color: #13141c;
+    border: 1px solid #23252f;
+    border-radius: 2px;
+    font-family: "Newsreader", ui-serif, Georgia, serif;
+    font-style: italic;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #cbd0dd;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-2px);
+    transition:
+      opacity 220ms ease,
+      visibility 220ms ease,
+      transform 220ms ease;
+  }
+  .defined-term:hover .defined-term__popover,
+  .defined-term__trigger:focus-visible ~ .defined-term__popover,
+  .defined-term__popover[data-pinned="true"] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+  .defined-term__def {
+    display: block;
+  }
+  .defined-term__lesson {
+    display: inline-block;
+    margin-top: 0.5rem;
+    font-family: "JetBrains Mono", monospace;
+    font-style: normal;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    color: #d76b54;
+    text-decoration: underline dotted rgba(189, 73, 49, 0.4);
+    text-underline-offset: 3px;
+    transition: color 160ms ease;
+  }
+  .defined-term__lesson:hover {
+    color: #e9876f;
+  }
+
   /* Atmospheric texture overlay — radial bloom + film grain */
   .atmosphere {
     position: absolute;

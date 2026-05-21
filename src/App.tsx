@@ -7,8 +7,16 @@ import LogitLens from "./components/LogitLens";
 import TokenImportance from "./components/TokenImportance";
 import SteeringPanel from "./components/SteeringPanel";
 import RefusalBenchLeaderboard from "./components/RefusalBenchLeaderboard";
+import WelcomeDeck from "./components/WelcomeDeck";
+import DefinedTerm from "./components/DefinedTerm";
+import TryThis from "./components/TryThis";
 import { getRefusalPairs } from "./lib/api";
 import type { TensorWithMetadata } from "./engine/types";
+
+// GitHub URL for the durable lessons; lessonHref on DefinedTerm jumps the
+// curious reader to the relevant chapter without leaving the manuscript.
+const LESSON_BASE =
+  "https://github.com/lymnal/clearbox_ai/blob/proposal/research-direction-2025/docs/lessons";
 
 const ALL_BENCH_TECHNIQUES = [
   "arditi",
@@ -125,7 +133,17 @@ export default function App() {
           onLoadModel={() => loadModel("Xenova/gpt2")}
         />
 
-        <Section number="I" title="Prompt">
+        <WelcomeDeck />
+
+        <Section
+          number="I"
+          title="Prompt"
+          tryThis={{
+            hint: "type 'The Eiffel Tower is located in' and press generate",
+            outcome:
+              "everything downstream — attention heads, layer-by-layer predictions, ablations — keys off this one sentence",
+          }}
+        >
           <PromptInput value={prompt} onChange={setPrompt} />
           <PrimaryAction
             onClick={handleGenerate}
@@ -141,31 +159,111 @@ export default function App() {
         </Section>
 
         {(genText || stats) && (
-          <Section number="II" title="Generation">
+          <Section
+            number="II"
+            title="Generation"
+            tryThis={{
+              hint: "compare what came out with the telemetry on the right",
+              outcome:
+                "each attention tensor and hidden state captured here feeds the panels below",
+            }}
+          >
             <GenerationView text={genText} stats={stats} />
           </Section>
         )}
 
-        <Section number="III" title="Attention">
+        <Section
+          number="III"
+          title={
+            <DefinedTerm
+              definition="How each token in your prompt 'looks at' the others to decide what to write next. A GPT-2 model has 12 layers × 12 heads = 144 of these patterns running in parallel; some specialise in copying, some in tracking position, some are full induction circuits."
+              lessonHref={`${LESSON_BASE}/01-residual-streams.md`}
+              lessonLabel="→ Lesson 01 · residual streams"
+            >
+              Attention
+            </DefinedTerm>
+          }
+          tryThis={{
+            hint: "click an orange-tagged cell in the head grid",
+            outcome:
+              "orange cells are induction heads — they implement in-context learning. The heatmap on the right reveals what they actually attend to.",
+          }}
+        >
           <div className="grid grid-cols-1 gap-10 xl:grid-cols-[1fr_1.15fr]">
             <HeadGrid />
             <AttentionHeatmap />
           </div>
         </Section>
 
-        <Section number="IV" title="Layer Predictions">
+        <Section
+          number="IV"
+          title={
+            <DefinedTerm
+              definition="What the model would predict next if you halted it at each layer. The trick: multiply the residual stream at layer L by the unembedding matrix, see what tokens come out top. Early layers usually say 'the'; later layers converge on the actual answer."
+              lessonHref={`${LESSON_BASE}/01-residual-streams.md`}
+              lessonLabel="→ Lesson 01 · residual streams"
+            >
+              Layer Predictions
+            </DefinedTerm>
+          }
+          tryThis={{
+            hint: "watch the prediction collapse from 'the' to 'Paris' between layers 9 and 11",
+            outcome:
+              "this is the moment the model 'figures it out'. Lewis Smith / nostalgebraist coined this view in 2020.",
+          }}
+        >
           <LogitLens prompt={prompt} />
         </Section>
 
-        <Section number="V" title="Token Importance">
+        <Section
+          number="V"
+          title={
+            <DefinedTerm
+              definition="Which tokens in your prompt most influence a target prediction. Computed from the gradient of the target's log-probability with respect to each token's embedding. High-gradient tokens are the levers a clever attack would pull."
+              lessonHref={`${LESSON_BASE}/03-direction-extraction.md`}
+              lessonLabel="→ Lesson 03 · direction extraction"
+            >
+              Token Importance
+            </DefinedTerm>
+          }
+          tryThis={{
+            hint: "type the prompt, then 'Paris' as the target token",
+            outcome:
+              "'Eiffel', 'city', and 'Tower' light up — the French-flavored tokens. An adversarial attack would swap them out.",
+          }}
+        >
           <TokenImportance prompt={prompt} />
         </Section>
 
-        <Section number="VI" title="Intervention">
+        <Section
+          number="VI"
+          title="Intervention"
+          tryThis={{
+            hint: "compute a steering vector, then slide α from −3 to +3 and watch generation tilt",
+            outcome:
+              "at α = +1.5 the model talks about sunsets; at α = −1.5 it complains about traffic. Same prompt.",
+          }}
+        >
           <SteeringPanel prompt={prompt} />
         </Section>
 
-        <Section number="VII" title="Refusal Bench">
+        <Section
+          number="VII"
+          title={
+            <DefinedTerm
+              definition="A head-to-head comparison of six published methods for stripping a safety-trained model of its refusal. The bench scores each method on two axes: does the model stop saying 'I refuse' (Δ refusal rate) and does its internal sense that the request is harmful actually disappear (Δ AUC, a probe-based measurement)."
+              lessonHref={`${LESSON_BASE}/07-what-the-bench-measures.md`}
+              lessonLabel="→ Lesson 07 · what the bench measures"
+            >
+              Refusal Bench
+            </DefinedTerm>
+          }
+          tryThis={{
+            hint: "click 'run bench' (≈25 min on free CPU)",
+            outcome:
+              "six rows render. Where Δ refusal rate is big but Δ AUC is small, the method only suppressed speech, not understanding.",
+          }}
+        >
           <RefusalBenchLeaderboard
             layer={steeringLayer}
             harmfulPrompts={refusalHarmful}
@@ -316,15 +414,24 @@ function StatusInline({
 function Section({
   number,
   title,
+  tryThis,
   children,
 }: {
   number: string;
-  title: string;
+  title: ReactNode;
+  /** Optional editor-whisper line under the title — see TryThis component. */
+  tryThis?: { hint: string; outcome?: string };
   children: ReactNode;
 }) {
   return (
     <section className="mb-20">
-      <header className="mb-8 flex items-baseline gap-5">
+      <header
+        className={
+          tryThis
+            ? "mb-2 flex items-baseline gap-5"
+            : "mb-8 flex items-baseline gap-5"
+        }
+      >
         <span className="font-display text-2xl italic text-vermillion">
           {number}.
         </span>
@@ -333,6 +440,13 @@ function Section({
         </h2>
         <span className="rule-flex" />
       </header>
+      {tryThis ? (
+        <TryThis
+          hint={tryThis.hint}
+          outcome={tryThis.outcome}
+          className="mb-8 ml-9"
+        />
+      ) : null}
       {children}
     </section>
   );

@@ -129,6 +129,27 @@ export default function RefusalBenchLeaderboard({
         </div>
       </header>
 
+      {/* DECK — plain-English explainer for first-time visitors */}
+      <p className="relative mb-9 max-w-[64ch] font-serif text-[0.95rem] italic leading-relaxed text-slate-300">
+        <span aria-hidden className="not-italic mr-2 text-slate-700">
+          ¶
+        </span>
+        Each row tests one published method for stopping the model from refusing
+        harmful requests. The two columns measure (1)&nbsp;did the model stop
+        saying{" "}
+        <span className="not-italic font-mono text-slate-400">
+          &quot;I refuse&quot;
+        </span>{" "}
+        (<span className="text-vermillion-light">Δ refusal rate</span>), and
+        (2)&nbsp;did its internal sense that{" "}
+        <span className="not-italic font-mono text-slate-400">
+          &quot;this is harmful&quot;
+        </span>{" "}
+        actually disappear (<span className="text-cerulean-light">Δ AUC</span>).
+        When the two diverge — refusal collapses but the harmfulness signal
+        holds — the method only suppressed speech, not understanding.
+      </p>
+
       {/* BODY */}
       <div className="relative">
         {isRunning ? (
