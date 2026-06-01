@@ -42,6 +42,26 @@ if "HF_TOKEN" not in os.environ and TOKEN_PATH.exists():
     os.environ["HF_TOKEN"] = TOKEN_PATH.read_text().strip()
 
 
+def _json_safe(obj):
+    """
+    Recursively replace non-finite floats (NaN / ±Inf) with None.
+
+    Python's json.dumps emits a bare `NaN` / `Infinity` token, which is invalid
+    JSON that browser JSON.parse rejects — a single errored or degenerate row
+    would otherwise make the whole leaderboard file unparseable and blank the
+    UI (re-introducing the exact empty-state bug the cached artifact fixes).
+    """
+    import math
+
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=20, help="pair count per class")
@@ -116,6 +136,10 @@ def main() -> int:
     all_rows = []
     probe_train_auc = None
     probe_test_auc = None
+    probe_cv_auc_mean = None
+    probe_cv_auc_std = None
+    n_extraction_pairs = None
+    n_eval_prompts = None
 
     for tname in techniques:
         print(f"\n[bench-local] ── {tname} ──", flush=True)
@@ -138,6 +162,10 @@ def main() -> int:
             if probe_train_auc is None:
                 probe_train_auc = result.probe_train_auc
                 probe_test_auc = result.probe_test_auc
+                probe_cv_auc_mean = result.probe_cv_auc_mean
+                probe_cv_auc_std = result.probe_cv_auc_std
+                n_extraction_pairs = result.n_extraction_pairs
+                n_eval_prompts = result.n_eval_prompts
 
             (out_dir / f"{tname}.json").write_text(json.dumps(serialize(result), indent=2))
             if row.error:
@@ -172,6 +200,26 @@ def main() -> int:
         "results": all_rows,
     }
     combined_path.write_text(json.dumps(combined, indent=2, default=str))
+
+    # UI-shaped artifact for the leaderboard (public/bench/). NaN-sanitized so a
+    # single errored/degenerate row can't make the file invalid JSON and blank
+    # the leaderboard. Overwrites the cached default with this fresh local run.
+    ui_artifact = {
+        "model_name": "meta-llama/Llama-3.2-1B-Instruct",
+        "layer": args.layer,
+        "n_extraction_pairs": n_extraction_pairs,
+        "n_eval_prompts": n_eval_prompts,
+        "probe_train_auc": probe_train_auc,
+        "probe_test_auc": probe_test_auc,
+        "probe_cv_auc_mean": probe_cv_auc_mean,
+        "probe_cv_auc_std": probe_cv_auc_std,
+        "results": all_rows,
+    }
+    public_dir = BACKEND.parent / "public" / "bench"
+    public_dir.mkdir(parents=True, exist_ok=True)
+    public_path = public_dir / "refusal_bench_default.json"
+    public_path.write_text(json.dumps(_json_safe(ui_artifact), indent=2))
+    print(f"saved UI artifact: {public_path}")
 
     # Print summary
     print(f"\n\n=== REFUSAL BENCH — Llama-3.2-1B (local, {target_dtype}) ===")

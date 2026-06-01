@@ -178,18 +178,31 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     const attentions = attentionsToLayerMap(result.attentions ?? [], 0);
     const hiddenStates = hiddenStatesToLayerMap(result.hiddenStates ?? [], 0);
 
+    // Step-0 attention/hidden states come from the PROMPT-ONLY forward pass,
+    // so their sequence length is the prompt length — not prompt+generated.
+    // result.tokens holds the full sequence (prompt + generated tokens); slice
+    // it to the step-0 length before any attention math. Otherwise
+    // detectInductionHeads / classifyAttentionHead throw on the
+    // token-count-vs-seqLen mismatch, and the throw (caught in
+    // App.handleGenerate) silently clears the whole panel — the original bug.
+    const firstAttn = attentions.values().next().value as
+      | TensorView
+      | undefined;
+    const stepSeqLen = firstAttn ? firstAttn.shape[1] : result.tokens.length;
+    const stepTokens = result.tokens.slice(0, stepSeqLen);
+
     set({
       attentions,
       hiddenStates,
-      tokens: result.tokens,
+      tokens: stepTokens,
       selectedLayer: 0,
       selectedHead: 0,
     });
 
     // Compute head grid if we have attentions
-    if (attentions.size > 0 && result.tokens.length > 0) {
+    if (attentions.size > 0 && stepTokens.length > 0) {
       // Get induction heads across all layers
-      const inductionResults = analyzeAllLayers(attentions, result.tokens, 0.3);
+      const inductionResults = analyzeAllLayers(attentions, stepTokens, 0.3);
       const inductionSet = new Set(
         inductionResults.map((r) => `${r.layer}-${r.head}`),
       );
@@ -199,17 +212,21 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
 
       const grid: HeadGridCell[][] = [];
 
-      for (let layer = 0; layer < 12; layer++) {
+      // Layer/head counts come from the tensors themselves, not hardcoded
+      // 12/12, so the grid also works for non-GPT-2 models.
+      const layerKeys = [...attentions.keys()].sort((a, b) => a - b);
+      for (const layer of layerKeys) {
         const layerTensor = attentions.get(layer);
         if (!layerTensor) continue;
 
+        const numHeads = layerTensor.shape[0];
+        const seqLen = layerTensor.shape[1];
         const entropyTensor = computeAttentionEntropy(layerTensor);
         const layerRow: HeadGridCell[] = [];
 
-        for (let head = 0; head < 12; head++) {
-          // Extract single head's [seq, seq] matrix for classification
-          // layerTensor shape is [12, seq, seq]
-          const seqLen = layerTensor.shape[1];
+        for (let head = 0; head < numHeads; head++) {
+          // Extract single head's [seq, seq] matrix for classification.
+          // layerTensor shape is [numHeads, seq, seq].
           const headData = new Float32Array(seqLen * seqLen);
           for (let i = 0; i < seqLen; i++) {
             for (let j = 0; j < seqLen; j++) {
@@ -218,7 +235,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
           }
           const headTensor = new TensorView(headData, [seqLen, seqLen]);
 
-          const pattern = classifyAttentionHead(headTensor, result.tokens);
+          const pattern = classifyAttentionHead(headTensor, stepTokens);
           const key = `${layer}-${head}`;
 
           layerRow.push({

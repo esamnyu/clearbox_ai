@@ -397,6 +397,9 @@ def generate_steered(
     alpha: float,
     layer: int,
     max_new_tokens: int = 30,
+    seed: int = 42,
+    do_sample: bool = False,
+    temperature: float = 0.7,
 ) -> Dict[str, Any]:
     """
     Generate text with a steering vector injected at the specified layer.
@@ -406,6 +409,12 @@ def generate_steered(
 
     Positive alpha steers toward the positive direction (e.g., positive sentiment).
     Negative alpha steers toward the negative direction.
+
+    Determinism: the steered and baseline generations must differ ONLY by the
+    intervention, not by sampling noise. We default to greedy decoding
+    (do_sample=False) so the comparison is exactly controlled. If sampling is
+    requested, we reseed torch before BOTH calls so they draw the same samples
+    and any divergence is still attributable to the steering vector.
     """
     model = get_model()
 
@@ -424,31 +433,28 @@ def generate_steered(
     # Generate with the hook active at the specified layer
     hook_name = f"blocks.{layer}.hook_resid_post"
 
-    with model.hooks(fwd_hooks=[(hook_name, steering_hook)]):
-        output = model.generate(
+    def _generate():
+        if do_sample:
+            torch.manual_seed(seed)
+        return model.generate(
             tokens,
             max_new_tokens=max_new_tokens,
-            temperature=0.7,
-            do_sample=True,
+            temperature=temperature,
+            do_sample=do_sample,
         )
 
-    generated_text = model.to_string(output[0])
+    with model.hooks(fwd_hooks=[(hook_name, steering_hook)]):
+        steered_output = _generate()
 
-    # Also generate without steering for comparison
-    baseline_output = model.generate(
-        tokens,
-        max_new_tokens=max_new_tokens,
-        temperature=0.7,
-        do_sample=True,
-    )
-    baseline_text = model.to_string(baseline_output[0])
+    # Baseline (no steering) under the same decoding regime for a fair contrast.
+    baseline_output = _generate()
 
     return {
         "prompt": prompt,
         "layer": layer,
         "alpha": alpha,
-        "steered_text": generated_text,
-        "baseline_text": baseline_text,
+        "steered_text": model.to_string(steered_output[0]),
+        "baseline_text": model.to_string(baseline_output[0]),
     }
 
 
@@ -465,6 +471,9 @@ def ablate_along_direction(
     direction: List[float],
     layer: int,
     max_new_tokens: int = 30,
+    seed: int = 42,
+    do_sample: bool = False,
+    temperature: float = 0.7,
 ) -> Dict[str, Any]:
     """
     Generate text with the projection along `direction` removed at `layer`.
@@ -475,7 +484,9 @@ def ablate_along_direction(
     the chosen layer. Contrast with generate_steered, which adds alpha * v.
 
     Returns both ablated and baseline generations so the caller can show a
-    side-by-side. Sampling temperature matches generate_steered for parity.
+    side-by-side. Decoding is greedy by default so the ablated vs. baseline
+    pair differs ONLY by the intervention; if sampling is requested we reseed
+    before both calls so they share the same draws.
     """
     model = get_model()
 
@@ -494,20 +505,20 @@ def ablate_along_direction(
     ablation_hook = make_ablation_hook(unit_direction)
     hook_name = f"blocks.{layer}.hook_resid_post"
 
-    with model.hooks(fwd_hooks=[(hook_name, ablation_hook)]):
-        ablated_output = model.generate(
+    def _generate():
+        if do_sample:
+            torch.manual_seed(seed)
+        return model.generate(
             tokens,
             max_new_tokens=max_new_tokens,
-            temperature=0.7,
-            do_sample=True,
+            temperature=temperature,
+            do_sample=do_sample,
         )
 
-    baseline_output = model.generate(
-        tokens,
-        max_new_tokens=max_new_tokens,
-        temperature=0.7,
-        do_sample=True,
-    )
+    with model.hooks(fwd_hooks=[(hook_name, ablation_hook)]):
+        ablated_output = _generate()
+
+    baseline_output = _generate()
 
     return {
         "prompt": prompt,

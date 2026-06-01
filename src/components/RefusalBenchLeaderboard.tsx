@@ -45,6 +45,14 @@ function formatSeconds(n: number): string {
   return `${n.toFixed(1)}s`;
 }
 
+// Cached run shipped as a static asset (see public/bench/). Loaded on mount so
+// the leaderboard always paints with real numbers — the live /refusal-bench
+// path stays available behind the "re-run" button for local dev, but is
+// impractical on free-tier CPU deploys.
+const CACHED_RESULT_URL = "/bench/refusal_bench_default.json";
+
+type ResultSource = "cached" | "live";
+
 export default function RefusalBenchLeaderboard({
   layer,
   harmfulPrompts,
@@ -52,6 +60,7 @@ export default function RefusalBenchLeaderboard({
   techniqueNames = DEFAULT_TECHNIQUES,
 }: RefusalBenchLeaderboardProps) {
   const [result, setResult] = useState<BenchResult | null>(null);
+  const [resultSource, setResultSource] = useState<ResultSource | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealKey, setRevealKey] = useState(0);
@@ -59,6 +68,23 @@ export default function RefusalBenchLeaderboard({
   useEffect(() => {
     if (result) setRevealKey((k) => k + 1);
   }, [result]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(CACHED_RESULT_URL)
+      .then((r) => (r.ok ? (r.json() as Promise<BenchResult>) : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setResult((prev) => prev ?? data);
+        setResultSource((prev) => prev ?? "cached");
+      })
+      .catch(() => {
+        /* fall through to empty state; user can still click run */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const canRun =
     !isRunning &&
@@ -77,6 +103,7 @@ export default function RefusalBenchLeaderboard({
         harmless_prompts: harmlessPrompts,
       });
       setResult(r);
+      setResultSource("live");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -148,6 +175,10 @@ export default function RefusalBenchLeaderboard({
         actually disappear (<span className="text-cerulean-light">Δ AUC</span>).
         When the two diverge — refusal collapses but the harmfulness signal
         holds — the method only suppressed speech, not understanding.
+        <span className="not-italic mt-3 block font-display text-[0.6rem] uppercase tracking-[0.34em] text-slate-500">
+          numbers below were run locally on llama-3.2-1B; the deployed backend
+          defaults to GPT-2.
+        </span>
       </p>
 
       {/* BODY */}
@@ -171,6 +202,17 @@ export default function RefusalBenchLeaderboard({
         <div className="font-serif text-xs italic text-slate-500">
           {result ? (
             <>
+              {resultSource === "cached" ? (
+                <>
+                  <span
+                    title="Bench was executed locally on Llama-3.2-1B. The deployed backend defaults to GPT-2 because Llama is too slow on free-tier CPU; click ‘re-run live’ to hit the connected backend."
+                    className="font-display not-italic text-[0.6rem] uppercase tracking-[0.34em] text-slate-400"
+                  >
+                    cached · run locally on llama-3.2-1B
+                  </span>
+                  <Sep />
+                </>
+              ) : null}
               <span className="font-mono not-italic text-slate-300">
                 probe train AUC {result.probe_train_auc.toFixed(2)}
               </span>
@@ -178,6 +220,20 @@ export default function RefusalBenchLeaderboard({
               <span className="font-mono not-italic text-slate-300">
                 test AUC {result.probe_test_auc.toFixed(2)}
               </span>
+              {result.probe_cv_auc_mean != null ? (
+                <>
+                  <Sep />
+                  <span
+                    title="Cross-validated AUC — the honest metric when n_samples ≪ d_model makes the single-split train AUC saturate at 1.00."
+                    className="font-mono not-italic text-cerulean-light"
+                  >
+                    CV AUC {result.probe_cv_auc_mean.toFixed(2)}
+                    {result.probe_cv_auc_std != null
+                      ? ` ± ${result.probe_cv_auc_std.toFixed(2)}`
+                      : ""}
+                  </span>
+                </>
+              ) : null}
               <Sep />
               <span>
                 {result.n_extraction_pairs} extraction pair
@@ -228,7 +284,13 @@ export default function RefusalBenchLeaderboard({
               "group-disabled:border-slate-800"
             }
           >
-            {isRunning ? "running bench…" : result ? "run again" : "run bench"}
+            {isRunning
+              ? "running bench…"
+              : resultSource === "cached"
+                ? "re-run live"
+                : result
+                  ? "run again"
+                  : "run bench"}
           </span>
         </button>
       </footer>
@@ -399,6 +461,15 @@ function Row({ row, index }: RowProps) {
             }}
           >
             verbal refusal broken; harmfulness signal preserved
+          </p>
+        ) : null}
+        {row.probe_cosine != null ? (
+          <p
+            className="mt-1 font-mono text-[0.6rem] text-slate-600"
+            title="|cos(probe weight, ablated direction)|. Near 0 means the ablation barely touches the axis the probe reads, so a preserved AUC is expected by construction — not proof the harmfulness signal survived."
+          >
+            cos(w,&nbsp;
+            <DHat />) {row.probe_cosine.toFixed(2)}
           </p>
         ) : null}
       </div>

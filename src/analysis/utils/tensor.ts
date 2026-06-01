@@ -41,7 +41,7 @@ export class TensorView {
     const size = shape.reduce((a, b) => a * b, 1);
     if (data.length !== size) {
       throw new Error(
-        `Data length ${data.length} does not match shape ${shape} (size ${size})`
+        `Data length ${data.length} does not match shape ${shape} (size ${size})`,
       );
     }
 
@@ -77,7 +77,7 @@ export class TensorView {
   private indicesToOffset(indices: number[]): number {
     if (indices.length !== this.shape.length) {
       throw new Error(
-        `Expected ${this.shape.length} indices, got ${indices.length}`
+        `Expected ${this.shape.length} indices, got ${indices.length}`,
       );
     }
 
@@ -86,7 +86,7 @@ export class TensorView {
       const idx = indices[i] < 0 ? this.shape[i] + indices[i] : indices[i];
       if (idx < 0 || idx >= this.shape[i]) {
         throw new Error(
-          `Index ${indices[i]} out of bounds for dimension ${i} (size ${this.shape[i]})`
+          `Index ${indices[i]} out of bounds for dimension ${i} (size ${this.shape[i]})`,
         );
       }
       offset += idx * this.strides[i];
@@ -133,11 +133,11 @@ export class TensorView {
    */
   slice(indices: (number | null)[]): TensorView {
     if (indices.length === 0 || indices.length > this.shape.length) {
-      throw new Error('Invalid slice indices');
+      throw new Error("Invalid slice indices");
     }
 
     // Simple implementation: only handle single index for first dimension
-    if (indices.length === 1 && typeof indices[0] === 'number') {
+    if (indices.length === 1 && typeof indices[0] === "number") {
       const idx = indices[0] < 0 ? this.shape[0] + indices[0] : indices[0];
       const offset = idx * this.strides[0];
       const newSize = this.shape.slice(1).reduce((a, b) => a * b, 1);
@@ -146,7 +146,7 @@ export class TensorView {
     }
 
     // RESEARCHER TODO: Implement full slicing with ranges
-    throw new Error('Advanced slicing not yet implemented');
+    throw new Error("Advanced slicing not yet implemented");
   }
 
   // ============================================================================
@@ -180,7 +180,7 @@ export class TensorView {
     // RESEARCHER TODO: Implement axis-wise sum
     // Hint: Create new shape by removing the specified axis
     // Iterate over all indices, accumulate along the reduction axis
-    throw new Error('Axis-wise sum not yet implemented');
+    throw new Error("Axis-wise sum not yet implemented");
   }
 
   /**
@@ -191,11 +191,11 @@ export class TensorView {
    */
   mean(axis?: number): TensorView | number {
     const s = this.sum(axis);
-    if (typeof s === 'number') {
+    if (typeof s === "number") {
       return s / this.data.length;
     }
     // RESEARCHER TODO: Implement axis-wise mean
-    throw new Error('Axis-wise mean not yet implemented');
+    throw new Error("Axis-wise mean not yet implemented");
   }
 
   /**
@@ -213,7 +213,7 @@ export class TensorView {
       return maxVal;
     }
     // RESEARCHER TODO: Implement axis-wise max
-    throw new Error('Axis-wise max not yet implemented');
+    throw new Error("Axis-wise max not yet implemented");
   }
 
   /**
@@ -228,7 +228,7 @@ export class TensorView {
       return minVal;
     }
     // RESEARCHER TODO: Implement axis-wise min
-    throw new Error('Axis-wise min not yet implemented');
+    throw new Error("Axis-wise min not yet implemented");
   }
 
   /**
@@ -238,7 +238,7 @@ export class TensorView {
    * Returns indices where maximum occurs
    */
   argmax(_axis?: number): TensorView | number {
-    throw new Error('argmax not yet implemented');
+    throw new Error("argmax not yet implemented");
   }
 
   // ============================================================================
@@ -252,7 +252,7 @@ export class TensorView {
    * @returns New tensor with result
    */
   add(other: TensorView | number): TensorView {
-    if (typeof other === 'number') {
+    if (typeof other === "number") {
       const result = new Float32Array(this.data.length);
       for (let i = 0; i < this.data.length; i++) {
         result[i] = this.data[i] + other;
@@ -275,7 +275,7 @@ export class TensorView {
    * Subtract a scalar or another tensor element-wise.
    */
   sub(other: TensorView | number): TensorView {
-    if (typeof other === 'number') {
+    if (typeof other === "number") {
       const result = new Float32Array(this.data.length);
       for (let i = 0; i < this.data.length; i++) {
         result[i] = this.data[i] - other;
@@ -311,7 +311,7 @@ export class TensorView {
    * ```
    */
   mul(other: TensorView | number): TensorView {
-    if (typeof other === 'number') {
+    if (typeof other === "number") {
       // Scalar multiplication (same as scale, but consistent API)
       const result = new Float32Array(this.data.length);
       for (let i = 0; i < this.data.length; i++) {
@@ -337,10 +337,10 @@ export class TensorView {
    */
   div(_other: TensorView | number): TensorView {
     // RESEARCHER TODO: Implement division
-    if (typeof _other === 'number') {
+    if (typeof _other === "number") {
       // check for division by zero
       if (_other === 0) {
-        throw new Error('Division by zero is not allowed for scalar division.');
+        throw new Error("Division by zero is not allowed for scalar division.");
       }
       // scalar div
       const result = new Float32Array(this.data.length);
@@ -411,7 +411,7 @@ export class TensorView {
    * Numerical stability: subtract max before exp
    */
   softmax(_axis?: number): TensorView {
-    throw new Error('softmax not yet implemented');
+    throw new Error("softmax not yet implemented");
   }
 
   // ============================================================================
@@ -428,7 +428,7 @@ export class TensorView {
    * Shapes must be compatible: [a,b] · [b,c] → [a,c]
    */
   dot(_other: TensorView): TensorView {
-    throw new Error('dot not yet implemented');
+    throw new Error("dot not yet implemented");
   }
 
   /**
@@ -460,8 +460,15 @@ export class TensorView {
       }
       return sum;
     } else if (ord === Infinity) {
-      // Infinity norm: max absolute value
-      return Math.abs(this.max() as number);
+      // L∞ norm = max ABSOLUTE value. |max(x)| is wrong when the
+      // largest-magnitude entry is negative (e.g. [-10, 2] → should be 10,
+      // not 2), so scan |x_i| directly.
+      let maxAbs = 0;
+      for (let i = 0; i < this.data.length; i++) {
+        const a = Math.abs(this.data[i]);
+        if (a > maxAbs) maxAbs = a;
+      }
+      return maxAbs;
     }
 
     throw new Error(`Norm order ${ord} not supported`);
@@ -475,7 +482,7 @@ export class TensorView {
   normalize(): TensorView {
     const n = this.norm();
     if (n === 0) {
-      throw new Error('Cannot normalize zero vector');
+      throw new Error("Cannot normalize zero vector");
     }
     return this.scale(1 / n);
   }
@@ -494,7 +501,7 @@ export class TensorView {
     const newSize = newShape.reduce((a, b) => a * b, 1);
     if (newSize !== this.data.length) {
       throw new Error(
-        `Cannot reshape ${this.shape} (size ${this.data.length}) to ${newShape} (size ${newSize})`
+        `Cannot reshape ${this.shape} (size ${this.data.length}) to ${newShape} (size ${newSize})`,
       );
     }
     return new TensorView(this.data, newShape);
@@ -523,7 +530,7 @@ export class TensorView {
     }
 
     // RESEARCHER TODO: Implement general transpose
-    throw new Error('General transpose not yet implemented');
+    throw new Error("General transpose not yet implemented");
   }
 
   /**
@@ -532,7 +539,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement squeeze
    */
   squeeze(_axis?: number): TensorView {
-    throw new Error('squeeze not yet implemented');
+    throw new Error("squeeze not yet implemented");
   }
 
   /**
@@ -541,7 +548,7 @@ export class TensorView {
    * RESEARCHER TODO: Implement unsqueeze
    */
   unsqueeze(_axis: number): TensorView {
-    throw new Error('unsqueeze not yet implemented');
+    throw new Error("unsqueeze not yet implemented");
   }
 
   // ============================================================================
@@ -576,7 +583,7 @@ export class TensorView {
     }
 
     // RESEARCHER TODO: Implement for higher dimensions
-    throw new Error('toNestedArray only supports up to 2D');
+    throw new Error("toNestedArray only supports up to 2D");
   }
 
   /**
@@ -598,7 +605,7 @@ export class TensorView {
    */
   toString(): string {
     return `TensorView(shape=${this.shape}, data=${this.data.slice(0, 10)}${
-      this.data.length > 10 ? '...' : ''
+      this.data.length > 10 ? "..." : ""
     })`;
   }
 
@@ -631,7 +638,7 @@ export class TensorView {
    * Infer shape from nested structure, flatten to Float32Array
    */
   static fromNestedArray(_arr: NestedArray<number>): TensorView {
-    throw new Error('fromNestedArray not yet implemented');
+    throw new Error("fromNestedArray not yet implemented");
   }
 
   // ============================================================================

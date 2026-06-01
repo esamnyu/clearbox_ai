@@ -108,6 +108,8 @@ export interface TechniqueResult {
   delta_auc: number;
   elapsed_seconds: number;
   error: string | null;
+  /** |cos(probe weight, ablated direction)|. Optional: absent in older runs. */
+  probe_cosine?: number | null;
 }
 
 export interface BenchResult {
@@ -117,6 +119,9 @@ export interface BenchResult {
   n_eval_prompts: number;
   probe_train_auc: number;
   probe_test_auc: number;
+  /** Cross-validated probe AUC — the honest metric when n << d_model. Optional. */
+  probe_cv_auc_mean?: number | null;
+  probe_cv_auc_std?: number | null;
   results: TechniqueResult[];
 }
 

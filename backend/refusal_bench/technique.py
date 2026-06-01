@@ -69,6 +69,20 @@ class Technique:
 
     # --- Diagnostics ------------------------------------------------------
 
+    def unit_direction(self):
+        """
+        Return the fitted unit ablation direction (a torch.Tensor) for
+        direction-based techniques, or None for techniques that don't reduce to
+        a single direction.
+
+        The bench uses this to report cos(probe_weight, d̂): if that cosine is
+        near zero, a high post-ablation AUC is expected by construction (the
+        ablation and the probe read near-orthogonal axes) and is NOT evidence
+        the harmfulness representation survived. Surfacing it keeps the Zhao
+        dissociation honest.
+        """
+        return getattr(self, "_unit_direction", None)
+
     def __repr__(self) -> str:
         status = "fitted" if self._fitted else "unfitted"
         layer = f"@L{self._layer}" if self._layer is not None else ""

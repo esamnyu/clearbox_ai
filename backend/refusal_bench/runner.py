@@ -30,6 +30,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from typing import Callable, List, Optional, Tuple
 
+import numpy as np
 import torch
 
 from model import get_model, get_model_name
@@ -63,6 +64,8 @@ class TechniqueResult:
     delta_auc: float
     elapsed_seconds: float
     error: Optional[str] = None
+    # |cos(probe weight, ablated direction)| — the dissociation confound check.
+    probe_cosine: Optional[float] = None
 
 
 @dataclass
@@ -75,6 +78,8 @@ class BenchResult:
     n_eval_prompts: int
     probe_train_auc: float
     probe_test_auc: float
+    probe_cv_auc_mean: Optional[float] = None
+    probe_cv_auc_std: Optional[float] = None
     results: List[TechniqueResult] = field(default_factory=list)
 
 
@@ -88,9 +93,20 @@ def _generate_with_hook(
     hook_fn: Optional[Callable],
     max_new_tokens: int,
     temperature: float,
+    seed: Optional[int] = None,
 ) -> str:
-    """Generate a completion. If hook_name/hook_fn are None, no ablation."""
+    """
+    Generate a completion. If hook_name/hook_fn are None, no ablation.
+
+    When `seed` is given we reseed torch before generating, so the baseline and
+    ablated completions for the SAME prompt draw identical samples — the
+    refusal-rate delta then reflects the ablation, not sampling noise. This is
+    what makes the bench `seed` genuinely reproducible (previously it only
+    seeded the train/eval split, not generation).
+    """
     model = get_model()
+    if seed is not None:
+        torch.manual_seed(seed)
     formatted = apply_chat_template(prompt)
     tokens = model.to_tokens(formatted)
 
@@ -145,6 +161,36 @@ def _extract_residuals_with_hook(
         residuals.append(last)
 
     return torch.stack(residuals, dim=0)
+
+
+def probe_direction_cosine(probe, unit_direction) -> Optional[float]:
+    """
+    |cos(probe weight vector, ablated unit direction)|.
+
+    High → the ablation removes the same axis the probe reads, so a low
+    post-ablation AUC would be expected. Low → "AUC stayed high after ablation"
+    is near-guaranteed by construction (the ablation and the probe look at
+    near-orthogonal directions), NOT evidence the harmfulness representation
+    survived. The key confound to surface in the Zhao dissociation story.
+    Returns None for techniques that don't reduce to a single direction.
+    """
+    if unit_direction is None or probe is None:
+        return None
+    try:
+        w = np.asarray(probe.coef_).reshape(-1)
+        if hasattr(unit_direction, "detach"):
+            d = unit_direction.detach().cpu().numpy().reshape(-1)
+        else:
+            d = np.asarray(unit_direction).reshape(-1)
+        if w.shape != d.shape:
+            return None
+        wn = float(np.linalg.norm(w))
+        dn = float(np.linalg.norm(d))
+        if wn < 1e-12 or dn < 1e-12:
+            return None
+        return float(abs(np.dot(w, d) / (wn * dn)))
+    except Exception:
+        return None
 
 
 def _split(
@@ -220,8 +266,8 @@ def run_bench(
     baseline_auc = baseline_eval["auc"] if baseline_eval["auc"] is not None else 0.5
 
     baseline_completions = [
-        _generate_with_hook(p, None, None, max_new_tokens, temperature)
-        for p in eval_harmful
+        _generate_with_hook(p, None, None, max_new_tokens, temperature, seed=seed + i)
+        for i, p in enumerate(eval_harmful)
     ]
     baseline_refusal = refusal_rate(baseline_completions)
 
@@ -265,8 +311,10 @@ def run_bench(
 
             # Refusal rate with ablation hook active
             ablated_completions = [
-                _generate_with_hook(p, hook_name, hook_fn, max_new_tokens, temperature)
-                for p in eval_harmful
+                _generate_with_hook(
+                    p, hook_name, hook_fn, max_new_tokens, temperature, seed=seed + i
+                )
+                for i, p in enumerate(eval_harmful)
             ]
             ablated_refusal = refusal_rate(ablated_completions)
 
@@ -276,6 +324,9 @@ def run_bench(
             ablated_residuals = torch.cat([abl_harmful_resid, abl_harmless_resid], dim=0)
             ablated_eval = evaluate_probe(probe, ablated_residuals, labels=baseline_labels)
             ablated_auc = ablated_eval["auc"] if ablated_eval["auc"] is not None else 0.5
+
+            # Confound diagnostic: does the ablation touch the probe's axis?
+            cosine = probe_direction_cosine(probe, technique.unit_direction())
 
             elapsed = time.time() - start
             results.append(TechniqueResult(
@@ -289,6 +340,7 @@ def run_bench(
                 harmfulness_auc_post=ablated_auc,
                 delta_auc=ablated_auc - baseline_auc,
                 elapsed_seconds=elapsed,
+                probe_cosine=cosine,
             ))
         except Exception as e:
             elapsed = time.time() - start
@@ -313,6 +365,8 @@ def run_bench(
         n_eval_prompts=len(eval_harmful),
         probe_train_auc=probe_info["train_auc"],
         probe_test_auc=probe_info["test_auc"],
+        probe_cv_auc_mean=probe_info.get("cv_auc_mean"),
+        probe_cv_auc_std=probe_info.get("cv_auc_std"),
         results=results,
     )
 

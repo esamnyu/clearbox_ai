@@ -94,6 +94,11 @@ class SteeredGenerationRequest(BaseModel):
     alpha: float = Field(default=1.0, description="Steering strength")
     layer: int = Field(default=6, ge=0, le=27)
     max_new_tokens: int = Field(default=30, ge=1, le=100)
+    seed: int = Field(default=42, ge=0, description="RNG seed used when do_sample=True")
+    do_sample: bool = Field(
+        default=False,
+        description="Greedy by default so the before/after differs only by the intervention",
+    )
 
 
 class AblationRequest(BaseModel):
@@ -103,6 +108,11 @@ class AblationRequest(BaseModel):
     )
     layer: int = Field(default=6, ge=0, le=27, description="Layer for ablation")
     max_new_tokens: int = Field(default=30, ge=1, le=100)
+    seed: int = Field(default=42, ge=0, description="RNG seed used when do_sample=True")
+    do_sample: bool = Field(
+        default=False,
+        description="Greedy by default so the before/after differs only by the intervention",
+    )
 
 
 class RefusalBenchRequest(BaseModel):
@@ -172,6 +182,35 @@ def _validate_head(head: int) -> None:
         )
 
 
+# Public-deploy guards. The HF Space is unauthenticated, so restrict which
+# models can be pulled and cap the work any single request can trigger.
+ALLOWED_MODELS = {
+    "gpt2-small",
+    "meta-llama/Llama-3.2-1B-Instruct",
+    "meta-llama/Llama-3.2-3B-Instruct",
+}
+MAX_PROMPT_CHARS = 2000
+MAX_BENCH_PROMPTS = 200
+
+
+def _validate_model_name(name: str) -> None:
+    """Reject models outside the supported whitelist (no arbitrary HF pulls)."""
+    if name not in ALLOWED_MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"model '{name}' not allowed. Supported: {sorted(ALLOWED_MODELS)}",
+        )
+
+
+def _validate_prompt(prompt: str) -> None:
+    """Bound prompt length so a single request can't pin the free CPU tier."""
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"prompt too long ({len(prompt)} chars > {MAX_PROMPT_CHARS})",
+        )
+
+
 # -----------------------------------------------------------------------------
 # Endpoints
 # -----------------------------------------------------------------------------
@@ -192,7 +231,10 @@ async def load_model(req: LoadRequest):
     Subsequent calls with the same model return immediately.
     """
     try:
+        _validate_model_name(req.model_name)
         return model.load_model(req.model_name)
+    except HTTPException:
+        raise  # preserve 422 from the whitelist check
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -274,12 +316,15 @@ async def generate_steered(req: SteeredGenerationRequest):
     """Generate text with a steering vector injected at a specific layer."""
     try:
         _validate_layer(req.layer)
+        _validate_prompt(req.prompt)
         return research.generate_steered(
             req.prompt,
             req.steering_vector,
             req.alpha,
             req.layer,
             req.max_new_tokens,
+            seed=req.seed,
+            do_sample=req.do_sample,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -296,11 +341,14 @@ async def ablate_direction(req: AblationRequest):
     """
     try:
         _validate_layer(req.layer)
+        _validate_prompt(req.prompt)
         return research.ablate_along_direction(
             req.prompt,
             req.direction,
             req.layer,
             req.max_new_tokens,
+            seed=req.seed,
+            do_sample=req.do_sample,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -339,6 +387,8 @@ async def harmfulness_probe(req: HarmfulnessProbeRequest):
             "n_harmless": len(req.harmless_prompts),
             "train_auc": train_result["train_auc"],
             "test_auc": train_result["test_auc"],
+            "cv_auc_mean": train_result.get("cv_auc_mean"),
+            "cv_auc_std": train_result.get("cv_auc_std"),
             "n_train": train_result["n_train"],
             "n_test": train_result["n_test"],
             "pre_ablation_p_harm": pre_eval["p_harm"],
@@ -400,6 +450,11 @@ async def refusal_bench(req: RefusalBenchRequest):
     """
     try:
         _validate_layer(req.layer)
+        if len(req.harmful_prompts) + len(req.harmless_prompts) > MAX_BENCH_PROMPTS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"too many prompts (> {MAX_BENCH_PROMPTS}); split the run",
+            )
 
         result = run_bench(
             technique_names=req.technique_names,

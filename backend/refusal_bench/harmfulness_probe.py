@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 
 from model import get_model
 from research import make_ablation_hook
@@ -89,16 +89,45 @@ def train_probe(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    probe = LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced")
+    # Stronger regularization than the original C=1.0. With n_samples << d_model
+    # the probe can linearly separate ANY labeling, so the single-split
+    # train_auc saturates at 1.0 and is uninformative; we lean on regularization
+    # and treat cross-validated AUC (below) as the number to trust.
+    C = 0.5
+    probe = LogisticRegression(C=C, max_iter=2000, class_weight="balanced")
     probe.fit(X_train, y_train)
 
     train_scores = probe.predict_proba(X_train)[:, 1]
     test_scores = probe.predict_proba(X_test)[:, 1]
 
+    # Cross-validated AUC on the full set — the honest metric when one split's
+    # train_auc is degenerate. Stratified so both classes appear in each fold;
+    # guard datasets too small for CV (leaves the fields None).
+    cv_auc_mean = None
+    cv_auc_std = None
+    min_class = int(min((y == 1).sum(), (y == 0).sum()))
+    if min_class >= 2:
+        n_splits = min(5, min_class)
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        try:
+            cv_scores = cross_val_score(
+                LogisticRegression(C=C, max_iter=2000, class_weight="balanced"),
+                X,
+                y,
+                cv=skf,
+                scoring="roc_auc",
+            )
+            cv_auc_mean = float(cv_scores.mean())
+            cv_auc_std = float(cv_scores.std())
+        except ValueError:
+            pass  # degenerate (single-class) fold — leave as None
+
     return {
         "model": probe,
         "train_auc": float(roc_auc_score(y_train, train_scores)),
         "test_auc": float(roc_auc_score(y_test, test_scores)),
+        "cv_auc_mean": cv_auc_mean,
+        "cv_auc_std": cv_auc_std,
         "n_train": int(X_train.shape[0]),
         "n_test": int(X_test.shape[0]),
     }
