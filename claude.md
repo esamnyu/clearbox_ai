@@ -1,18 +1,18 @@
 # CLAUDE.md — NeuroScope-Web
 
-## Current status (late April 2026)
+## Current status (June 2026)
 
 Hybrid in-browser frontend + FastAPI/TransformerLens backend. The Dec 2024 goal was GPT-2-only browser-native interp; the Jan 2026 pivot, after a DeepMind consultation, was toward refusal-direction interpretability. Working branch: `proposal/research-direction-2025`.
 
-**Reality of the code right now:** backend is GPT-2-only (`gpt2-small`); 8 sentiment contrastive pairs in `research.py::get_contrastive_pairs`. **Ablation primitive is built** — `backend/research.py::ablate_along_direction` + `POST /ablate-direction` + UI in `src/components/SteeringPanel.tsx`. Llama-3.2-1B/3B migration is **deferred** per `docs/FELLOWS_SPRINT_9DAY.md`.
+**Reality of the code right now:** backend supports `gpt2-small` plus whitelisted `meta-llama/Llama-3.2-{1B,3B}-Instruct` (gated; `HF_TOKEN`) — see `ALLOWED_MODELS` in `backend/main.py` and `backend/model.py`. **Ablation primitive is built** — `backend/research.py::ablate_along_direction` + `POST /ablate-direction` + UI in `src/components/SteeringPanel.tsx`. The Refusal Bench harness implements all six techniques (`backend/refusal_bench/techniques/`). WS1–WS5 landed in commit `8169671` (May 31); **WS6 stats hardening — Wilson CIs, bootstrap AUC CIs, permutation p, threaded backend→frontend — is the current in-flight (uncommitted) diff.**
 
-**Active goal:** Anthropic Fellows portfolio (May 2026 cohort deadline April 26 has passed; **July cohort is the next live target**). Remaining deliverables:
+**Active goal:** Anthropic Fellows portfolio (**July 2026 cohort**). Remaining deliverables:
 
-1. **Deploy** backend (HF Spaces) + frontend (Vercel) on a public URL — infrastructure committed (`21457c8`); HF Space + Vercel project not yet created.
-2. ~~One projection-removal ablation primitive~~ — **done.**
-3. One small before/after experiment on the existing sentiment pairs (or first contact with Llama-3.2-1B if migrating early).
-4. ~800-word blog post + 3-min Loom walkthrough.
-5. Polished research statement (template at `docs/FELLOWS_RESEARCH_STATEMENT.md`, updated April 28).
+1. **Public deploy** — backend (HF Spaces) + frontend (Vercel); infrastructure committed (`21457c8`), but the HF Space and Vercel project are **not yet created**.
+2. ~~**Full 6-technique bench artifact**~~ **DONE (July 29)** — `public/bench/refusal_bench_default.json` is a complete six-row run, zero errors, with WS6 CI fields. Open follow-up: re-run at n=50 for statistical power (see gotchas).
+3. Blog post — draft at `docs/BLOG_POST_DRAFT.md`. Results table and repo URL now filled from the real run; **one TBD left**, the Vercel URL, which blocks on deliverable #1.
+4. 3-min Loom walkthrough.
+5. Polished research statement (template at `docs/FELLOWS_RESEARCH_STATEMENT.md`).
 
 **Research thesis as of April 28:** revised — the headline claim is now Zhao-style harmfulness probe after refusal ablation on **Llama-3.2-1B** (still open per literature search), with the rank-k curve demoted to "replication + extension." See "Update — April 28 2026" in `docs/RESEARCH_LANDSCAPE_2026.md`.
 
@@ -34,9 +34,9 @@ Hybrid in-browser frontend + FastAPI/TransformerLens backend. The Dec 2024 goal 
 
 | In scope | Out of scope |
 | --- | --- |
-| Deploy the GPT-2 tool publicly (HF Space + Vercel) | Llama-3.2 / Gemma-2-2B migration (deferred to post-application) |
-| Wire the existing ablation primitive into a small experiment | SAE training / SAELens integration |
-| One experiment on existing sentiment pairs | Attribution graphs / circuit-tracer integration |
+| Deploy publicly (HF Space + Vercel) | Cross-family migration (Gemma-2-2B etc.) |
+| Full 6-technique bench run on Llama-3.2-1B (migration is done; the artifact isn't) | SAE training / SAELens integration |
+| WS6 stats hardening (in flight) | Attribution graphs / circuit-tracer integration |
 | Blog post + Loom + research statement | Refactors that don't unblock the deploy |
 | README polish | New visualizations beyond what's in `src/components/` |
 
@@ -48,7 +48,7 @@ Hybrid in-browser frontend + FastAPI/TransformerLens backend. The Dec 2024 goal 
 | --- | --- |
 | Frontend | Vite + React 18 + TypeScript (strict), Zustand, TailwindCSS + Radix |
 | Worker | Comlink + `@huggingface/transformers` v3 (WebGPU) |
-| Backend | FastAPI + TransformerLens (`gpt2-small`) |
+| Backend | FastAPI + TransformerLens (`gpt2-small` + whitelisted Llama-3.2-1B/3B) |
 | Tests | Vitest, mocked pipeline factory in `tests/fixtures/` |
 
 ## Key paths
@@ -58,8 +58,10 @@ Hybrid in-browser frontend + FastAPI/TransformerLens backend. The Dec 2024 goal 
 | `src/engine/worker.ts` | Web Worker: model loading, tokenization, generation |
 | `src/engine/types.ts` | Shared interfaces (`PipelineFactory`, `TokenizerInterface`) |
 | `src/analysis/` | Pure tensor math — no React, no DOM, no async |
-| `src/lib/api.ts` | Frontend → backend HTTP client (currently modified, uncommitted) |
-| `backend/main.py` | FastAPI endpoints: `/load`, `/logit-lens`, `/attention`, `/gradients`, `/steering-vector`, `/generate-steered`, **`/ablate-direction`**, `/pca-trajectories`, `/contrastive-pairs` |
+| `src/lib/api.ts` | Frontend → backend HTTP client |
+| `src/components/RefusalBenchLeaderboard.tsx` | Bench leaderboard; loads cached static result from `public/bench/refusal_bench_default.json` on mount, optional live re-run via `/refusal-bench` |
+| `public/bench/` | Cached bench JSON served as a Vite static asset on the deploy |
+| `backend/main.py` | FastAPI endpoints: `/load`, `/logit-lens`, `/attention`, `/gradients`, `/steering-vector`, `/generate-steered`, **`/ablate-direction`**, `/pca-trajectories`, `/contrastive-pairs`, `/refusal-pairs`, `/harmfulness-probe`, `/refusal-bench`, `/refusal-bench/techniques` |
 | `backend/research.py` | TransformerLens-backed analysis logic |
 | `backend/model.py` | Singleton model loading |
 | `tests/fixtures/` | `mockPipelineFactory`, `mockTokenizer` |
@@ -91,10 +93,19 @@ uvicorn main:app --reload --port 8000   # backend at :8000; OpenAPI at /docs
 
 ## Live gotchas
 
-- `backend/main.py` layer fields use `le=11` (GPT-2-small specific). For Llama-3.2-1B (16 layers) bump to `le=15`; for 3B (28 layers) bump to `le=27`. Affects `AttentionRequest`, `SteeringRequest`, `SteeredGenerationRequest`, and `AblationRequest`.
+- `backend/main.py` layer fields are `le=27` to accommodate Llama-3.2-3B (28 layers). Runtime `_validate_layer` rejects out-of-range values per the actually-loaded model, so this is permissive at the schema layer and strict at execution.
 - The file is `claude.md` (lowercase) on disk; macOS APFS is case-insensitive so `CLAUDE.md` and `claude.md` resolve to the same inode. Git tracks the lowercase name. Don't try to "delete the duplicate" — there isn't one.
-- Pre-existing TypeScript errors in `src/engine/worker.ts` (transformers.js v3 ProgressInfo type drift) and `src/lib/utils.ts` (missing `clsx`/`tailwind-merge` declarations) are unrelated to current work but will fail `tsc --noEmit`. Out of scope unless the build needs them green.
-- `RESEARCH_STRATEGY.docx` is an untracked binary in the repo root — Jan 2026 strategy in Word form. Source-of-truth is the `.md` files in `docs/`.
+- ~~Pre-existing TypeScript errors in `src/engine/worker.ts`~~ **FIXED (July 29).** All 6 are gone and `npm run build` (`tsc && vite build`) passes. The ProgressInfo drift is now handled by `in`-narrowing plus a `toLoadStatus()` mapper instead of a lying `as` cast — transformers.js emits `initiate|download|progress|done|ready`, `LoadProgress` only models `downloading|loading|ready`, and the old code cast one onto the other.
+- **`npm run lint` had never run.** The script existed from the first commit but no ESLint config file did, so it always exited non-zero with "couldn't find a configuration file." `.eslintrc.cjs` now exists (eslintrc format — ESLint is pinned at 8.57, where flat config is still opt-in). Currently 0 errors / 26 warnings, all `no-console`.
+- **CI exists now** — `.github/workflows/ci.yml`: typecheck, lint, vitest, `vite build`, backend pytest on 3.11+3.12, and a `docker build ./backend`. Note `vercel.json` runs `vite build` *without* `tsc`, so **CI is the only place types are checked before production**. The docker job is correct-by-inspection but has never been executed — there is no Docker daemon on this Mac.
+- `src/engine/worker.ts`'s pipeline-factory DI seam is **vestigial**: `_setPipelineFactory`/`_resetPipelineFactory` exist and `docs/TESTING_STRATEGY.md` specifies the pattern, but `loadModel` calls `GPT2LMHeadModel.from_pretrained` / `AutoTokenizer.from_pretrained` directly and never consults the factory. Swapping it therefore redirects nothing. `_getPipelineFactory` was added so the seam is at least observable; actually routing `loadModel` through it is an open, behaviour-changing task.
+- Bench leaderboard ships a **cached static result** (`public/bench/refusal_bench_default.json`). As of **July 29 2026 this is a complete six-technique run** on Llama-3.2-1B, layer 8, **CPU/bfloat16**, seed 42, n=20 pairs/class, zero errored rows — with the full WS6 CI fields, so the leaderboard renders ± bands. Provenance (`device`, `dtype`, `seed`, `n_pairs_per_class`, `max_new_tokens`) is in the artifact and shown in the UI. Details in `docs/bench_partials_local/README.md`.
+  - **Read it with the intervals.** n=20 leaves 5 eval prompts / 10 AUC points; post-ablation AUC CIs span ~[0.25, 1.00]. **Zero techniques met the dissociation criterion.** A higher-power run (n=50, all available pairs) is the obvious next step — budget ~2.5–4 h on CPU, since COSMIC alone took 19 min and Cheng 17 min at n=20.
+  - **COSMIC's row is identical to Arditi's** to 17 sig figs. Not a bug: COSMIC's candidate per layer *is* diff-of-means, so its search reduces to layer selection, and it picked layer 8 — Arditi's layer. `findDuplicateRows()` flags this in the UI. Never count the two as independent evidence.
+  - `docs/bench_partials/` (May 21) remains historical-only: not strict JSON, 5/6 errored. Don't cite it.
+  - The backend defaults to GPT-2; "re-run live" hits `/refusal-bench` on whatever model is loaded — the full sweep is ~50 min on CPU and will time out on the free tier.
+- **The CPU bench path was dead until July 29** — `run_bench_local.py` casts to bfloat16 on CPU, and torch cannot convert bfloat16 to numpy (`TypeError: Got unsupported ScalarType BFloat16`), killing probe training. MPS casts to float16, which converts fine, so the bug was invisible on the MPS path. Fixed with `.float()` upcasts in `harmfulness_probe.py` (×2) and `runner.py`. **Prefer CPU regardless**: TransformerLens warns MPS "may produce silently incorrect results" on torch 2.12, and MPS held ~11 GB RSS here vs ~4–5 GB on CPU.
+- **TransformerLens calls hooks by keyword** — `fn(tensor, hook=hook_point)`. A closure whose second parameter is named anything but `hook` raises `unexpected keyword argument 'hook'`, but only deep inside a live generation loop. This shipped twice (Wollschlager in May, Herring in July). `backend/tests/test_hook_signatures.py` now catches it statically via `ast`, no model needed.
 
 ## Permissions
 

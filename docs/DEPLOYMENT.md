@@ -1,23 +1,37 @@
 # Deployment Guide
 
-> Goal: get NeuroScope live at a public URL reviewers can click, in one weekend, at zero cost.
-> Target split: **HuggingFace Spaces** (backend, free CPU) + **Vercel** (frontend, free).
+> Goal: NeuroScope live at a public URL a reviewer can click, in an afternoon, at zero cost.
+> Split: **HuggingFace Spaces** (backend, free CPU) + **Vercel** (frontend, free).
+
+**Read this first — what is already done.** The April 2026 version of this guide
+told you to write a Dockerfile, patch CORS, and add a `VITE_API_BASE` env var.
+All three shipped months ago. Following those steps now would duplicate or
+regress working code. What remains is *account creation and pushing*, which only
+Ethan can do. This rewrite reflects the repo as it actually stands.
+
+| Thing | State | Where |
+|---|---|---|
+| Backend Dockerfile | ✅ committed | `backend/Dockerfile` (+ `.dockerignore`) |
+| Pinned requirements | ✅ committed | `backend/requirements.txt` |
+| Configurable CORS | ✅ committed | `backend/main.py` — `ALLOWED_ORIGINS` env |
+| Model whitelist | ✅ committed | `backend/main.py` — `ALLOWED_MODELS` |
+| Frontend API base URL | ✅ committed | `src/lib/api.ts` — `VITE_API_BASE` |
+| Vercel build config | ✅ committed | `vercel.json` |
+| README rewrite | ✅ done | `README.md` |
+| **HF Space created** | ❌ **not done** | §1 below |
+| **Vercel project created** | ❌ **not done** | §2 below |
+| Screenshot / GIF in README | ❌ not done | §4 |
+| Loom walkthrough | ❌ not done | Ethan |
 
 ---
 
-## Why this split
+## 0. Prerequisites
 
-| Concern | Why HF Spaces | Why Vercel |
-|---|---|---|
-| Cost | Free CPU tier (16 GB RAM) is sufficient for GPT-2 small | Free tier with custom domain |
-| ML ecosystem | Native Docker + PyTorch + HuggingFace models | Not ML-friendly for Python |
-| Static + SPA hosting | Overkill | Purpose-built |
-| Setup time | ~30 min once your Dockerfile compiles | ~5 min from git repo |
-
-Alternatives if something breaks:
-- **Fly.io** for backend (more control, ~$5–15/mo, needs credit card)
-- **Modal Labs** for backend (serverless, pay-per-use, harder cold starts)
-- **Cloudflare Pages** for frontend (equivalent to Vercel)
+- A HuggingFace account, and **license acceptance on
+  [meta-llama/Llama-3.2-1B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct)**
+  if you want the Space to serve Llama at all. GPT-2 needs nothing.
+- An HF access token with `read` scope (Settings → Access Tokens).
+- A Vercel account linked to the GitHub account that holds this repo.
 
 ---
 
@@ -25,242 +39,155 @@ Alternatives if something breaks:
 
 ### 1a. Create the Space
 
-1. Go to https://huggingface.co, sign in, click **New Space**
-2. **Owner:** your account. **Name:** `neuroscope-api` (whatever). **SDK:** **Docker**. **Hardware:** CPU basic (free). Public.
-3. Clone the empty Space repo locally:
-   ```bash
-   git clone https://huggingface.co/spaces/<you>/neuroscope-api
-   ```
+1. https://huggingface.co/new-space
+2. **SDK: Docker** (blank template). **Hardware:** CPU basic (free). **Public.**
+3. Name it `neuroscope-api`. The resulting URL is
+   `https://<user>-neuroscope-api.hf.space` — note the **dash**, not a slash;
+   this is the value `VITE_API_BASE` needs later.
 
-### 1b. Prepare the Docker image
+### 1b. Push the backend
 
-Create `Dockerfile` at the Space repo root:
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 7860
-ENV TRANSFORMERS_CACHE=/app/.cache
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
-```
-
-Copy your `backend/*.py` and `backend/requirements.txt` into the Space repo root. Update `requirements.txt` to pin versions for reproducibility:
-
-```
-torch==2.3.0
-transformer_lens==2.11.0
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-pydantic==2.9.2
-numpy==1.26.4
-scikit-learn==1.5.2
-```
-
-### 1c. Update CORS for the real frontend URL
-
-In `main.py`, replace the hard-coded localhost origins:
-
-```python
-import os
-
-ALLOWED_ORIGINS = os.environ.get(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:3001"
-).split(",")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-```
-
-Set `ALLOWED_ORIGINS` in the Space's **Settings → Variables and secrets**:
-```
-ALLOWED_ORIGINS=https://neuroscope-<your-username>.vercel.app,http://localhost:3001
-```
-(update once Vercel gives you the real URL)
-
-### 1d. Push + verify
+The Space is a git repo whose **root** must be what the Dockerfile sees. Our
+Dockerfile lives in `backend/` and does `COPY . .`, so push the *contents* of
+`backend/`, not the whole monorepo:
 
 ```bash
-git add Dockerfile main.py model.py research.py requirements.txt
-git commit -m "feat: dockerize for HF Spaces"
-git push
+git clone https://huggingface.co/spaces/<user>/neuroscope-api /tmp/neuroscope-space
+rsync -a --delete \
+  --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
+  --exclude '.pytest_cache' --exclude 'tests' \
+  backend/ /tmp/neuroscope-space/
+cd /tmp/neuroscope-space && git add -A && git commit -m "deploy: NeuroScope API" && git push
 ```
 
-Watch the build log in the Space UI. First build is ~5–10 min (PyTorch is heavy). Once "Running," visit:
-```
-https://<you>-neuroscope-api.hf.space/
-```
-You should see `{"status":"ok","service":"neuroscope-api"}`.
+`backend/README.md` already carries the YAML front-matter (`title`, `sdk: docker`,
+`app_port`) that the Space card needs — that is why it must be copied too.
 
-**Smoke-test the model load:**
+> **Do not hand-write a new Dockerfile or requirements.txt.** The pinned set in
+> `backend/requirements.txt` includes two constraints that are easy to lose and
+> break the build: `transformers>=4.37.2,<5.0` (transformer-lens 2.11 imports
+> `transformers.TRANSFORMERS_CACHE`, removed in 5.x) and `huggingface-hub<1.0`.
+> An abbreviated requirements list — like the one the old version of this guide
+> printed — omits both and the Space fails at import time.
+
+### 1c. Set Variables and secrets
+
+Space → **Settings → Variables and secrets**:
+
+| Key | Kind | Value |
+|---|---|---|
+| `ALLOWED_ORIGINS` | Variable | `https://<your-vercel-url>,http://localhost:3001` |
+| `HF_TOKEN` | **Secret** | your HF read token — only needed for the gated Llama models |
+
+You will not know the Vercel URL until §2. Set `ALLOWED_ORIGINS` to
+`http://localhost:3001` now and come back — §2c.
+
+### 1d. Verify
+
 ```bash
-curl -X POST https://<you>-neuroscope-api.hf.space/load \
-  -H "Content-Type: application/json" \
-  -d '{"model_name":"gpt2-small"}'
+curl https://<user>-neuroscope-api.hf.space/
 ```
-First call takes 20–40s (model download + load). Subsequent calls return immediately.
+
+Expect `{"status":"ok","service":"neuroscope-api"}`. Then smoke-test a load:
+
+```bash
+curl -X POST https://<user>-neuroscope-api.hf.space/load \
+  -H 'Content-Type: application/json' -d '{"model_name":"gpt2-small"}'
+```
+
+First call is 20–40s (download + load). Interactive docs at `/docs`.
 
 ### 1e. Known pitfalls
 
-- **OOM on free tier.** GPT-2 small + TransformerLens fits comfortably in 16 GB. If you see OOM, you're probably trying to load `gpt2-medium`. Stay on `gpt2-small` for the demo.
-- **Space sleeps after inactivity.** HF Spaces free tier sleeps after ~30 min idle. First request after sleep takes ~30s. Acceptable for a demo; if you want to mitigate, add a note on the frontend: *"Backend is waking up — first request takes ~30s."*
-- **Model download is slow.** `TRANSFORMERS_CACHE=/app/.cache` is inside the container; the model re-downloads on every cold start. For a portfolio demo this is fine. To fix longer-term, persist the cache in `/data` (HF Spaces Persistent Storage addon).
+- **Only whitelisted models load.** `ALLOWED_MODELS` in `main.py` is
+  `gpt2-small` + the two Llama-3.2 Instruct sizes. Anything else 400s by design.
+- **Llama on free CPU is a trap.** Llama-3.2-1B loads in ~16 GB but generation
+  is minutes per prompt. The demo path is GPT-2; Llama numbers come from the
+  cached bench artifact, not from live Space traffic.
+- **`/refusal-bench` will time out on the free tier.** This is why
+  `backend/scripts/run_bench_local.py` exists and why the leaderboard ships a
+  cached JSON. Do not advertise live re-runs on the deploy.
+- **Spaces sleep after ~30 min idle**; first request after that is ~30s.
+- **The model cache is inside the container** (`/app/.cache/huggingface`), so it
+  re-downloads on every cold start. Fine for a portfolio demo.
+- **`TRANSFORMERS_CACHE` is deprecated** in transformers 4.x in favour of
+  `HF_HOME`. The Dockerfile sets both; expect a deprecation warning in the log.
+  It is noise, not a failure.
 
 ---
 
 ## 2. Frontend → Vercel
 
-### 2a. Add a backend URL env var
+### 2a. Import the project
 
-In `src/` wherever you hit the backend, read from an env var instead of hard-coding `localhost:8000`:
-
-```ts
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000';
-```
-
-Commit and push.
-
-Create `.env.local` for local dev:
-```
-VITE_API_BASE=http://localhost:8000
-```
-
-### 2b. Connect Vercel
-
-1. Go to https://vercel.com, sign in with GitHub.
-2. Click **Add New → Project**, import the repo.
-3. Framework preset: **Vite** (auto-detected).
-4. Root directory: leave blank (`/`).
-5. Environment variables → add:
+1. https://vercel.com/new → import this GitHub repo.
+2. Framework preset: **Vite** (auto-detected; `vercel.json` also pins it).
+3. Root directory: leave blank.
+4. Environment variable:
    ```
-   VITE_API_BASE=https://<you>-neuroscope-api.hf.space
+   VITE_API_BASE=https://<user>-neuroscope-api.hf.space
    ```
-6. Deploy.
+   Set it for **Production, Preview, and Development** — a Preview build without
+   it silently falls back to `http://localhost:8000` and every call fails.
+5. Deploy.
 
-Vercel gives you a URL like `https://neuroscope-<hash>.vercel.app`. Point-test:
-- Load the page.
-- Open devtools → Network. Trigger a backend call. Verify it goes to the HF Spaces URL, not localhost.
+> **Note on the build command.** `vercel.json` runs `vite build`, *not*
+> `npm run build` (which is `tsc && vite build`). That is deliberate — a type
+> error should not take the deploy down — but it means **Vercel does not
+> typecheck**. Typecheck is enforced only by `.github/workflows/ci.yml`. If you
+> remove that workflow, nothing checks types before they reach production.
 
-### 2c. Go back to HF Spaces and update CORS
+### 2b. Confirm the bench artifact shipped
 
-Add the Vercel URL to `ALLOWED_ORIGINS`. Restart the Space.
-
----
-
-## 3. Custom domain (optional, ~15 min)
-
-If you own a domain: in Vercel, **Settings → Domains → Add**. Follow the DNS instructions. A domain like `neuroscope.ethansam.dev` reads much better on an application than `neuroscope-a8k2zq.vercel.app`.
-
-Don't buy a domain for this unless you already have one. Not worth the overhead.
-
----
-
-## 4. End-to-end check
-
-Clean browser (incognito / different browser):
-1. Visit the Vercel URL.
-2. Page loads without console errors.
-3. Click "Load model" → wait for success.
-4. Enter a prompt. See tokens, activations, visualizations.
-5. No CORS errors in console.
-
-If any of these fails, fix before moving on. Reviewers will use a clean browser.
-
----
-
-## 5. README rewrite (60-second skim)
-
-Apply this structure to `README.md`. The old structure optimizes for contributors; the new one optimizes for reviewers landing from your application.
-
-```markdown
-# NeuroScope
-
-> **A browser-native mechanistic interpretability toolkit.** Load GPT-2, extract activations, visualize attention, inject steering vectors, and ablate directions — all from a single deployed URL.
-
-**[Live demo](https://neuroscope.vercel.app)** · **[3-min walkthrough (Loom)](<loom-url>)** · **[Blog post: <title>](<blog-url>)**
-
-![screenshot or GIF](docs/screenshot.png)
-
-## What's inside
-
-- **Frontend:** Vite + React + TypeScript, transformers.js in a Web Worker for in-browser inference.
-- **Backend:** FastAPI + TransformerLens for server-side activation analysis (logit lens, attention patterns, gradients, steering, PCA).
-- **One research finding so far:** <1-sentence summary of blog-post finding>. Full writeup linked above.
-
-## Research context
-
-I'm building this toolkit while teaching myself mechanistic interpretability. The field's current state — including where the single-direction refusal story has been superseded (Wollschlager 2025, Zhao 2025) and where it holds up — is summarized in [`docs/RESEARCH_LANDSCAPE_2026.md`](docs/RESEARCH_LANDSCAPE_2026.md).
-
-## Run locally
+The leaderboard fetches `/bench/refusal_bench_default.json` as a static asset.
+Anything in `public/` is copied verbatim into `dist/`, so:
 
 ```bash
-# Frontend
-npm install
-npm run dev    # → http://localhost:3001
-
-# Backend (separate terminal)
-cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+curl -sI https://<your-vercel-url>/bench/refusal_bench_default.json | head -1
 ```
 
-## Project layout
+A 404 here means the leaderboard renders empty on the live site while working
+locally — the single most likely deploy-day surprise.
 
-| Path | Purpose |
-|---|---|
-| `src/engine/` | Web Worker — transformers.js inference |
-| `src/analysis/` | Pure functions on extracted tensors |
-| `backend/research.py` | TransformerLens research functions |
-| `docs/` | Architecture + research landscape + testing strategy |
+### 2c. Go back and fix CORS
 
-## Stack
-
-Vite · React 18 · TypeScript strict · transformers.js · FastAPI · TransformerLens · Zustand · Tailwind · Radix
-
-## Status
-
-<One sentence about the current state. Be honest.>
-```
-
-**Things to cut from the current README** (optimizing for a stranger landing via application link):
-- Session 1 checkpoints (internal-only)
-- "For Researchers / For Engineers" audience split (assumes multiple contributors)
-- Phase 1/2/3 roadmap with emojis (reads as incomplete; aspirational roadmaps hurt portfolios)
-- References section at the bottom (fine but move to bottom)
-
-**Things to keep and polish:**
-- Live demo link (add if missing)
-- Screenshot / GIF (add if missing — critical)
-- Blog post link (add after Sunday)
-- Stack list (reviewers skim for tech legibility)
+Add the real Vercel URL to `ALLOWED_ORIGINS` in the Space settings and restart
+the Space. Vercel preview deploys get *per-deployment* URLs which will **not**
+match; either add the stable `*.vercel.app` production alias only, or accept
+that previews can't reach the backend.
 
 ---
 
-## 6. What Ethan has to do himself
+## 3. End-to-end check
 
-- Create HuggingFace account + Space
-- Create Vercel account
-- Own whatever domain name (optional)
-- Provide the Loom recording
-- Write the blog post
+In a clean/incognito browser:
 
-Everything else — Dockerfile, CORS patching, env var plumbing, README rewrite — is code I can do with you.
+1. Visit the Vercel URL — page paints, no console errors.
+2. The Refusal Bench leaderboard shows rows from the cached artifact.
+3. "Load model" → GPT-2 loads (browser-side worker; ~500 MB, first load is slow).
+4. A backend-dependent panel (logit lens / attention) returns data — this is the
+   real CORS test.
+5. Network tab shows requests going to `*.hf.space`, not `localhost`.
 
 ---
 
-*Last updated: April 17, 2026.*
+## 4. Still outstanding after the deploy
+
+- **Screenshot or GIF in the README.** Reviewers skim; a wall of text without a
+  visual reads as unfinished. Capture the leaderboard + an attention view.
+- **Fill the live URLs into `docs/BLOG_POST_DRAFT.md`** — it has `{{TBD — repo URL}}`
+  and `{{TBD — Vercel URL}}` placeholders.
+- **Loom walkthrough** (3 min), linked from the README header.
+
+---
+
+## 5. What only Ethan can do
+
+Creating the HF account/Space, accepting the Llama license, creating the Vercel
+project, recording the Loom, and writing the blog post. Everything else —
+Dockerfile, CORS plumbing, env plumbing, README, CI — is already in the repo.
+
+---
+
+*Last updated: July 29, 2026 — rewritten against the actual state of the repo;
+the April 17 version described work that had since been completed.*

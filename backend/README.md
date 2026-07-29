@@ -12,29 +12,42 @@ pinned: false
 
 FastAPI + TransformerLens backend for the NeuroScope interpretability toolkit.
 
-Exposes activation-extraction endpoints (logit lens, attention patterns, gradient-based token importance, steering vectors, PCA trajectories) for the NeuroScope frontend.
+Exposes activation-extraction endpoints (logit lens, attention patterns, gradient-based token importance, steering vectors, PCA trajectories) plus the Refusal Bench (six published refusal-ablation techniques scored against a shared harmfulness probe) for the NeuroScope frontend.
 
 ## Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /load` | Load a HuggingFace model (default: `gpt2-small`) |
+| `POST /load` | Load a model from the whitelist (default: `gpt2-small`) |
 | `POST /logit-lens` | Layer-by-layer next-token predictions |
 | `POST /attention` | Attention pattern for a given (layer, head) |
 | `POST /gradients` | Token-level gradient magnitudes w.r.t. a target token |
 | `POST /steering-vector` | Difference-of-means vector from contrastive prompts |
 | `POST /generate-steered` | Generation with a steering vector injected at a layer |
 | `POST /ablate-direction` | Generation with a direction projected out of the residual stream (`h' = h − (h·d̂)d̂`) |
+| `POST /harmfulness-probe` | Train a Zhao-style linear harmfulness probe on residuals at a layer; optionally re-evaluate it under ablation |
+| `POST /refusal-bench` | Run the Refusal Bench end-to-end: one row per requested technique, scored by refusal rate + probe AUC (optional `over_refusal_prompts` for techniques that need an over-refusal split, e.g. Maskey) |
+| `GET /refusal-bench/techniques` | List the registered refusal-ablation techniques |
 | `POST /pca-trajectories` | 3D PCA of residual stream across layers + tokens |
 | `GET /contrastive-pairs` | Built-in sentiment contrastive prompt pairs |
+| `GET /refusal-pairs` | Curated refusal-direction contrastive pairs (harmful + harmless) |
 
 Interactive docs at `/docs` once the Space is live.
 
+## Supported models
+
+Model loading is restricted to a whitelist (no arbitrary HF pulls):
+
+- `gpt2-small` — default, ungated
+- `meta-llama/Llama-3.2-1B-Instruct` — gated; requires `HF_TOKEN`
+- `meta-llama/Llama-3.2-3B-Instruct` — gated; requires `HF_TOKEN`
+
 ## Configuration
 
-Set the following Space Variable/Secret in **Settings → Variables and secrets**:
+Set the following Space Variables/Secrets in **Settings → Variables and secrets**:
 
 - `ALLOWED_ORIGINS` — comma-separated CORS origins (e.g. `https://neuroscope.vercel.app,http://localhost:3001`)
+- `HF_TOKEN` (secret) — HuggingFace token with access to the gated Llama-3.2 models; not needed for GPT-2
 
 ## Local development
 
