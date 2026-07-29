@@ -335,8 +335,16 @@ export class TensorView {
   /**
    * Divide by a scalar or another tensor element-wise.
    */
+  /**
+   * Divide elementwise by a tensor, or by a scalar.
+   *
+   * Zero handling is deliberately asymmetric: a scalar zero divisor is a
+   * programming error and throws, while a zero *inside* an elementwise divisor
+   * yields NaN at that position and lets the rest of the tensor through — the
+   * numpy-like behaviour analysis code expects. Both are pinned in
+   * tests/unit/tensor.test.ts.
+   */
   div(_other: TensorView | number): TensorView {
-    // RESEARCHER TODO: Implement division
     if (typeof _other === "number") {
       // check for division by zero
       if (_other === 0) {
@@ -357,17 +365,9 @@ export class TensorView {
 
     const result = new Float32Array(this.data.length);
     for (let i = 0; i < this.data.length; i++) {
-      if (_other.data[i] === 0) {
-        // throw new Error(
-        //   `Division by zero at index ${i} in element-wise division.`
-        // );
-        result[i] = NaN;
-      } else {
-        result[i] = this.data[i] / _other.data[i];
-      }
+      result[i] = _other.data[i] === 0 ? NaN : this.data[i] / _other.data[i];
     }
     return new TensorView(result, [...this.shape]);
-    // throw new Error('div not yet implemented');
   }
 
   /**

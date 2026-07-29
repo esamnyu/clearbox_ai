@@ -94,3 +94,61 @@ describe("TensorView reductions & norms", () => {
     expect(v.norm()).toBeCloseTo(1, 6);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Elementwise arithmetic
+//
+// These cases were previously only exercised by src/analysis/test.ts — a
+// console.log scratch script that nothing imported and no runner executed, so
+// its "assertions" were eyeballed once and never again. add/div were the only
+// TensorView operations with no real coverage. That file is now deleted and
+// its cases live here, where a regression actually fails a build.
+// ---------------------------------------------------------------------------
+
+describe("TensorView elementwise arithmetic", () => {
+  const a = () => new TensorView(Float32Array.from([1, 2, 3, 4]), [2, 2]);
+  const b = () => new TensorView(Float32Array.from([5, 6, 7, 8]), [2, 2]);
+
+  it("adds another tensor elementwise", () => {
+    expect(Array.from(a().add(b()).data)).toEqual([6, 8, 10, 12]);
+  });
+
+  it("adds a scalar to every element", () => {
+    expect(Array.from(a().add(10).data)).toEqual([11, 12, 13, 14]);
+  });
+
+  it("rejects an add against a mismatched shape", () => {
+    const wrong = new TensorView(Float32Array.from([1, 2]), [2]);
+    expect(() => a().add(wrong)).toThrow(/Shape mismatch/);
+  });
+
+  it("divides by a scalar", () => {
+    expect(Array.from(b().div(2).data)).toEqual([2.5, 3, 3.5, 4]);
+  });
+
+  it("divides elementwise", () => {
+    expect(Array.from(b().div(b()).data)).toEqual([1, 1, 1, 1]);
+  });
+
+  it("preserves shape through arithmetic", () => {
+    expect(a().add(b()).shape).toEqual([2, 2]);
+    expect(b().div(2).shape).toEqual([2, 2]);
+  });
+
+  // Division-by-zero is handled ASYMMETRICALLY, and that asymmetry is load-
+  // bearing for callers: scalar /0 is a programming error and throws, but an
+  // elementwise divisor with a zero in it yields NaN at that position and
+  // keeps going. Pinning both so neither silently flips to the other.
+  it("throws on scalar division by zero", () => {
+    expect(() => a().div(0)).toThrow(/Division by zero/);
+  });
+
+  it("yields NaN — not a throw — at zero positions of an elementwise divisor", () => {
+    const divisor = new TensorView(Float32Array.from([1, 0, 2, 0]), [2, 2]);
+    const out = Array.from(a().div(divisor).data);
+    expect(out[0]).toBe(1);
+    expect(out[2]).toBe(1.5);
+    expect(out[1]).toBeNaN();
+    expect(out[3]).toBeNaN();
+  });
+});
