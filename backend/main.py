@@ -126,11 +126,16 @@ class RefusalBenchRequest(BaseModel):
     layer: residual-stream layer for extraction + ablation.
     harmful_prompts/harmless_prompts: contrastive pairs. The runner
         splits 80/20 (configurable) into extraction + eval folds.
+    over_refusal_prompts: optional benign-but-edgy prompts (XSTest-style).
+        Required by the "maskey" technique, which subtracts the
+        over-refusal direction from the harmful direction; other
+        techniques ignore it.
     """
     technique_names: List[str] = Field(..., min_length=1)
     layer: int = Field(ge=0, le=27)
     harmful_prompts: List[str] = Field(..., min_length=5)
     harmless_prompts: List[str] = Field(..., min_length=5)
+    over_refusal_prompts: Optional[List[str]] = Field(default=None, min_length=1)
     test_fraction: float = Field(default=0.2, gt=0.0, lt=1.0)
     max_new_tokens: int = Field(default=32, ge=1, le=128)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -450,7 +455,11 @@ async def refusal_bench(req: RefusalBenchRequest):
     """
     try:
         _validate_layer(req.layer)
-        if len(req.harmful_prompts) + len(req.harmless_prompts) > MAX_BENCH_PROMPTS:
+        over_refusal = req.over_refusal_prompts or []
+        total_prompts = (
+            len(req.harmful_prompts) + len(req.harmless_prompts) + len(over_refusal)
+        )
+        if total_prompts > MAX_BENCH_PROMPTS:
             raise HTTPException(
                 status_code=422,
                 detail=f"too many prompts (> {MAX_BENCH_PROMPTS}); split the run",
@@ -461,6 +470,7 @@ async def refusal_bench(req: RefusalBenchRequest):
             layer=req.layer,
             harmful_prompts=req.harmful_prompts,
             harmless_prompts=req.harmless_prompts,
+            over_refusal_prompts=req.over_refusal_prompts,
             test_fraction=req.test_fraction,
             max_new_tokens=req.max_new_tokens,
             temperature=req.temperature,

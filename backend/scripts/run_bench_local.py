@@ -42,26 +42,6 @@ if "HF_TOKEN" not in os.environ and TOKEN_PATH.exists():
     os.environ["HF_TOKEN"] = TOKEN_PATH.read_text().strip()
 
 
-def _json_safe(obj):
-    """
-    Recursively replace non-finite floats (NaN / ±Inf) with None.
-
-    Python's json.dumps emits a bare `NaN` / `Infinity` token, which is invalid
-    JSON that browser JSON.parse rejects — a single errored or degenerate row
-    would otherwise make the whole leaderboard file unparseable and blank the
-    UI (re-introducing the exact empty-state bug the cached artifact fixes).
-    """
-    import math
-
-    if isinstance(obj, float):
-        return obj if math.isfinite(obj) else None
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(v) for v in obj]
-    return obj
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=20, help="pair count per class")
@@ -86,7 +66,7 @@ def main() -> int:
     import model as model_mod
     import refusal_pairs
     import over_refusal_pairs
-    from refusal_bench.runner import run_bench, serialize
+    from refusal_bench.runner import json_safe, run_bench, serialize
 
     if args.device:
         # Optional override; otherwise model.get_device() picks MPS on Apple Silicon
@@ -167,6 +147,7 @@ def main() -> int:
                 n_extraction_pairs = result.n_extraction_pairs
                 n_eval_prompts = result.n_eval_prompts
 
+            # serialize() is NaN-sanitized via json_safe in the runner.
             (out_dir / f"{tname}.json").write_text(json.dumps(serialize(result), indent=2))
             if row.error:
                 print(f"  ERROR: {row.error[:120]}")
@@ -199,14 +180,28 @@ def main() -> int:
         "probe_test_auc": probe_test_auc,
         "results": all_rows,
     }
-    combined_path.write_text(json.dumps(combined, indent=2, default=str))
+    combined_path.write_text(json.dumps(json_safe(combined), indent=2, default=str))
 
     # UI-shaped artifact for the leaderboard (public/bench/). NaN-sanitized so a
     # single errored/degenerate row can't make the file invalid JSON and blank
     # the leaderboard. Overwrites the cached default with this fresh local run.
+    # Provenance fields (device/dtype/seed/n_pairs_per_class) are written into
+    # the shipped artifact, not just the combined debug dump. Two reasons:
+    #   * TransformerLens warns that the MPS backend "may produce silently
+    #     incorrect results" on torch 2.12 (TransformerLensOrg/TransformerLens
+    #     #1178). An artifact that does not say which backend produced it can't
+    #     be audited against that warning.
+    #   * This repo has already been bitten by two same-named runs with
+    #     different numbers (see docs/bench_partials/README.md). Recording the
+    #     config in the artifact makes a run self-identifying.
     ui_artifact = {
         "model_name": "meta-llama/Llama-3.2-1B-Instruct",
         "layer": args.layer,
+        "device": model_mod.get_device(),
+        "dtype": str(target_dtype),
+        "seed": args.seed,
+        "n_pairs_per_class": n,
+        "max_new_tokens": args.max_new_tokens,
         "n_extraction_pairs": n_extraction_pairs,
         "n_eval_prompts": n_eval_prompts,
         "probe_train_auc": probe_train_auc,
@@ -218,7 +213,7 @@ def main() -> int:
     public_dir = BACKEND.parent / "public" / "bench"
     public_dir.mkdir(parents=True, exist_ok=True)
     public_path = public_dir / "refusal_bench_default.json"
-    public_path.write_text(json.dumps(_json_safe(ui_artifact), indent=2))
+    public_path.write_text(json.dumps(json_safe(ui_artifact), indent=2))
     print(f"saved UI artifact: {public_path}")
 
     # Print summary

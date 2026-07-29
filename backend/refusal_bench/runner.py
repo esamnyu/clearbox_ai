@@ -25,6 +25,7 @@ techniques on the same model.
 
 from __future__ import annotations
 
+import math
 import random
 import time
 from dataclasses import asdict, dataclass, field
@@ -37,11 +38,16 @@ from model import get_model, get_model_name
 from research import apply_chat_template
 
 from .harmfulness_probe import (
+    auc_permutation_p,
+    bootstrap_auc_ci,
+    bootstrap_discriminability_ci,
+    discriminability,
+    discriminability_permutation_p,
     evaluate_probe,
     extract_last_token_residuals,
     train_probe,
 )
-from .scoring import refusal_rate
+from .scoring import refusal_count, wilson_ci
 from .techniques import TECHNIQUES
 
 
@@ -66,6 +72,27 @@ class TechniqueResult:
     error: Optional[str] = None
     # |cos(probe weight, ablated direction)| — the dissociation confound check.
     probe_cosine: Optional[float] = None
+    # 95% CIs (Wilson for refusal rate, percentile bootstrap for AUC) and the
+    # one-sided permutation p that the POST-ablation AUC beats chance. These
+    # turn the bare deltas into claims a reviewer can interrogate at n~5–15.
+    refusal_rate_baseline_ci: Optional[Tuple[float, float]] = None
+    refusal_rate_ablated_ci: Optional[Tuple[float, float]] = None
+    harmfulness_auc_pre_ci: Optional[Tuple[float, float]] = None
+    harmfulness_auc_post_ci: Optional[Tuple[float, float]] = None
+    harmfulness_auc_post_p: Optional[float] = None
+    # Discriminability = |AUC - 0.5|, in [0, 0.5]: distance from chance, sign
+    # ignored. A probe reading perfectly BACKWARDS (AUC 0.05) still carries the
+    # harmfulness information, so "did the signal survive?" must be scored on
+    # distance from chance, not on AUC itself. The `_p` here is TWO-sided.
+    # Raw AUC fields above are kept because only their sign gives the direction.
+    harmfulness_discriminability_pre: Optional[float] = None
+    harmfulness_discriminability_post: Optional[float] = None
+    harmfulness_discriminability_pre_ci: Optional[Tuple[float, float]] = None
+    harmfulness_discriminability_post_ci: Optional[Tuple[float, float]] = None
+    harmfulness_discriminability_post_p: Optional[float] = None
+    # Sample sizes behind those intervals — so the UI can say "AUC on N points".
+    n_refusal_eval: Optional[int] = None  # denominator of the refusal rate
+    n_auc_eval: Optional[int] = None       # eval-harmful + eval-harmless
 
 
 @dataclass
@@ -179,7 +206,8 @@ def probe_direction_cosine(probe, unit_direction) -> Optional[float]:
     try:
         w = np.asarray(probe.coef_).reshape(-1)
         if hasattr(unit_direction, "detach"):
-            d = unit_direction.detach().cpu().numpy().reshape(-1)
+            # .float() guards bfloat16, which has no numpy equivalent.
+            d = unit_direction.detach().float().cpu().numpy().reshape(-1)
         else:
             d = np.asarray(unit_direction).reshape(-1)
         if w.shape != d.shape:
@@ -264,12 +292,25 @@ def run_bench(
     baseline_labels = [1] * len(eval_harmful) + [0] * len(eval_harmless)
     baseline_eval = evaluate_probe(probe, baseline_residuals, labels=baseline_labels)
     baseline_auc = baseline_eval["auc"] if baseline_eval["auc"] is not None else 0.5
+    # Bootstrap band on the baseline (pre-ablation) AUC. Shared across techniques
+    # since they all share this probe + eval set, so compute it once.
+    n_auc_eval = len(baseline_labels)
+    baseline_auc_ci = bootstrap_auc_ci(baseline_labels, baseline_eval["p_harm"], seed=seed)
+    # Same band expressed as distance from chance — see harmfulness_probe's
+    # "why AUC alone is the wrong statistic" note.
+    baseline_disc = discriminability(baseline_auc)
+    baseline_disc_ci = bootstrap_discriminability_ci(
+        baseline_labels, baseline_eval["p_harm"], seed=seed
+    )
 
     baseline_completions = [
         _generate_with_hook(p, None, None, max_new_tokens, temperature, seed=seed + i)
         for i, p in enumerate(eval_harmful)
     ]
-    baseline_refusal = refusal_rate(baseline_completions)
+    n_refusal_eval = len(baseline_completions)
+    baseline_refusal_k = refusal_count(baseline_completions)
+    baseline_refusal = baseline_refusal_k / n_refusal_eval if n_refusal_eval else 0.0
+    baseline_refusal_ci = wilson_ci(baseline_refusal_k, n_refusal_eval)
 
     # ── 3. Per-technique loop ────────────────────────────────────────────
     results: List[TechniqueResult] = []
@@ -289,6 +330,12 @@ def run_bench(
                 delta_auc=float("nan"),
                 elapsed_seconds=0.0,
                 error=f"unknown technique: {tname}. Known: {sorted(TECHNIQUES)}",
+                refusal_rate_baseline_ci=baseline_refusal_ci,
+                harmfulness_auc_pre_ci=baseline_auc_ci,
+                harmfulness_discriminability_pre=baseline_disc,
+                harmfulness_discriminability_pre_ci=baseline_disc_ci,
+                n_refusal_eval=n_refusal_eval,
+                n_auc_eval=n_auc_eval,
             ))
             continue
 
@@ -316,7 +363,11 @@ def run_bench(
                 )
                 for i, p in enumerate(eval_harmful)
             ]
-            ablated_refusal = refusal_rate(ablated_completions)
+            ablated_refusal_k = refusal_count(ablated_completions)
+            ablated_refusal = (
+                ablated_refusal_k / n_refusal_eval if n_refusal_eval else 0.0
+            )
+            ablated_refusal_ci = wilson_ci(ablated_refusal_k, n_refusal_eval)
 
             # Post-ablation AUC at the same extract layer
             abl_harmful_resid = _extract_residuals_with_hook(eval_harmful, layer, hook_name, hook_fn)
@@ -324,6 +375,18 @@ def run_bench(
             ablated_residuals = torch.cat([abl_harmful_resid, abl_harmless_resid], dim=0)
             ablated_eval = evaluate_probe(probe, ablated_residuals, labels=baseline_labels)
             ablated_auc = ablated_eval["auc"] if ablated_eval["auc"] is not None else 0.5
+            # Band on the post-ablation AUC + the significance of "still above
+            # chance" — the actual residual-harmfulness claim.
+            ablated_auc_ci = bootstrap_auc_ci(baseline_labels, ablated_eval["p_harm"], seed=seed)
+            ablated_auc_p = auc_permutation_p(baseline_labels, ablated_eval["p_harm"], seed=seed)
+            # Sign-agnostic version: an inverted probe still carries the signal.
+            ablated_disc = discriminability(ablated_auc)
+            ablated_disc_ci = bootstrap_discriminability_ci(
+                baseline_labels, ablated_eval["p_harm"], seed=seed
+            )
+            ablated_disc_p = discriminability_permutation_p(
+                baseline_labels, ablated_eval["p_harm"], seed=seed
+            )
 
             # Confound diagnostic: does the ablation touch the probe's axis?
             cosine = probe_direction_cosine(probe, technique.unit_direction())
@@ -341,6 +404,18 @@ def run_bench(
                 delta_auc=ablated_auc - baseline_auc,
                 elapsed_seconds=elapsed,
                 probe_cosine=cosine,
+                refusal_rate_baseline_ci=baseline_refusal_ci,
+                refusal_rate_ablated_ci=ablated_refusal_ci,
+                harmfulness_auc_pre_ci=baseline_auc_ci,
+                harmfulness_auc_post_ci=ablated_auc_ci,
+                harmfulness_auc_post_p=ablated_auc_p,
+                harmfulness_discriminability_pre=baseline_disc,
+                harmfulness_discriminability_post=ablated_disc,
+                harmfulness_discriminability_pre_ci=baseline_disc_ci,
+                harmfulness_discriminability_post_ci=ablated_disc_ci,
+                harmfulness_discriminability_post_p=ablated_disc_p,
+                n_refusal_eval=n_refusal_eval,
+                n_auc_eval=n_auc_eval,
             ))
         except Exception as e:
             elapsed = time.time() - start
@@ -356,6 +431,12 @@ def run_bench(
                 delta_auc=float("nan"),
                 elapsed_seconds=elapsed,
                 error=f"{type(e).__name__}: {e}",
+                refusal_rate_baseline_ci=baseline_refusal_ci,
+                harmfulness_auc_pre_ci=baseline_auc_ci,
+                harmfulness_discriminability_pre=baseline_disc,
+                harmfulness_discriminability_pre_ci=baseline_disc_ci,
+                n_refusal_eval=n_refusal_eval,
+                n_auc_eval=n_auc_eval,
             ))
 
     return BenchResult(
@@ -371,6 +452,26 @@ def run_bench(
     )
 
 
+def json_safe(obj: object) -> object:
+    """
+    Recursively replace non-finite floats (NaN / ±Inf) with None.
+
+    Error rows carry float('nan') metrics. Python's json.dumps would emit a
+    bare `NaN` token (invalid JSON that browser JSON.parse rejects), and
+    Starlette's JSONResponse uses json.dumps(allow_nan=False), which raises —
+    so a single errored technique would 500 the whole /refusal-bench response.
+    Mapping to None keeps every consumer (live API, local-script artifacts)
+    on strict, parseable JSON.
+    """
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    return obj
+
+
 def serialize(result: BenchResult) -> dict:
-    """JSON-friendly dict for HTTP responses."""
-    return asdict(result)
+    """JSON-friendly, NaN-free dict for HTTP responses (see json_safe)."""
+    return {k: json_safe(v) for k, v in asdict(result).items()}

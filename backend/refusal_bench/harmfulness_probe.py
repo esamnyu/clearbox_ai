@@ -16,7 +16,7 @@ The ablation hook is imported from research.make_ablation_hook so the bench
 and the UI ablation share a single source of truth for h' = h − (h · d̂) d̂.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -77,7 +77,17 @@ def train_probe(
             f"harmless={harmless_residuals.shape[1]}"
         )
 
-    X = torch.cat([harmful_residuals, harmless_residuals], dim=0).cpu().numpy()
+    # .float() before .numpy(): torch cannot convert bfloat16 to numpy at all
+    # ("Got unsupported ScalarType BFloat16"), which broke every CPU bench run
+    # — run_bench_local.py casts the model to bfloat16 on CPU (float16 on MPS,
+    # which is why MPS runs never hit this). sklearn needs float32/64 anyway,
+    # so upcasting here is the correct conversion, not a workaround.
+    X = (
+        torch.cat([harmful_residuals, harmless_residuals], dim=0)
+        .float()
+        .cpu()
+        .numpy()
+    )
     y = np.concatenate(
         [
             np.ones(harmful_residuals.shape[0], dtype=np.int64),
@@ -146,7 +156,8 @@ def evaluate_probe(
     if residuals.ndim != 2:
         raise ValueError("residuals must be 2D [n, d_model]")
 
-    p_harm = probe.predict_proba(residuals.cpu().numpy())[:, 1]
+    # .float() for the same bfloat16 reason as in train_probe above.
+    p_harm = probe.predict_proba(residuals.float().cpu().numpy())[:, 1]
 
     auc: Optional[float] = None
     if labels is not None:
@@ -162,6 +173,231 @@ def evaluate_probe(
         "mean_p_harm": float(p_harm.mean()),
         "auc": auc,
     }
+
+
+# -----------------------------------------------------------------------------
+# Uncertainty estimation
+#
+# The eval set is tiny (n ~ 5–15 per class), so a point AUC like 0.76 is a
+# single draw from a wide sampling distribution — on ~26 points ROC-AUC only
+# takes values on a grid of step ~1/169. Reporting it bare invites the obvious
+# reviewer rebuttal ("0.96 → 0.76 is within noise at this n"). These two
+# estimators answer that rebuttal directly:
+#   * bootstrap_auc_ci  → how wide is the band around the point AUC?
+#   * auc_permutation_p → is the post-ablation AUC ABOVE chance? (one-sided)
+# Both seed an explicit Generator so a given (labels, scores) → identical CI/p
+# across runs, matching the rest of the bench's determinism contract.
+#
+# ── Why AUC alone is the wrong "did the signal survive?" statistic ───────────
+#
+# AUC measures ranking agreement, and 0.5 — not 0 — is the no-information
+# point. An AUC of 0.05 is not "signal destroyed"; it is a probe that
+# discriminates almost perfectly and reads BACKWARDS. Flip its sign and it is a
+# 0.95 probe. The harmfulness information is fully present in the residual
+# stream either way, which is precisely what the dissociation question asks
+# about.
+#
+# This is not hypothetical here. At n=50, Arditi ablation drives post-AUC to
+# 0.35 and Wollschlager to 0.32 — both BELOW chance. The one-sided
+# auc_permutation_p correctly returns ~0.88 and ~0.93 for those ("no evidence
+# AUC > 0.5"), but read casually that looks like "no signal", when the honest
+# reading is "signal, pointing the other way, and this eval is too small to
+# resolve which".
+#
+# So the discriminability functions below score |AUC − 0.5| instead: distance
+# from chance, in [0, 0.5], sign-agnostic. 0 means no information; 0.5 means
+# perfect separation in one direction or the other. Raw AUC is still reported
+# alongside, because the SIGN is what tells you the direction — you need both.
+#
+# These are additive: auc_permutation_p and bootstrap_auc_ci keep their exact
+# original meaning so artifacts written before this change are not silently
+# reinterpreted. See docs/bench_partials/README.md for why this repo is strict
+# about that.
+# -----------------------------------------------------------------------------
+
+
+def discriminability(auc: Optional[float]) -> Optional[float]:
+    """
+    |AUC − 0.5| — how far the probe is from uninformative, ignoring direction.
+
+    Range [0, 0.5]. Returns None for a None/NaN AUC so callers can distinguish
+    "undefined" from "no discrimination".
+    """
+    if auc is None:
+        return None
+    a = float(auc)
+    if not np.isfinite(a):
+        return None
+    return abs(a - 0.5)
+
+def bootstrap_auc_ci(
+    labels: Sequence[int],
+    scores: Sequence[float],
+    n_boot: int = 2000,
+    ci: float = 0.95,
+    seed: int = 42,
+) -> Tuple[float, float]:
+    """
+    Percentile bootstrap CI for ROC-AUC.
+
+    Resamples (label, score) pairs with replacement n_boot times and takes the
+    central `ci` mass of the resampled AUCs. Resamples that collapse to a
+    single class (AUC undefined) are skipped. Returns (nan, nan) if the input
+    is single-class or every resample degenerated.
+
+    Known failure mode — boundary degeneracy: when the observed AUC is exactly
+    0.0 or 1.0 (scores perfectly rank the labels), every bootstrap resample
+    that retains both classes is also perfectly ranked, so the interval
+    collapses to zero width — (1.0, 1.0) or (0.0, 0.0). At small n this reads
+    as "zero uncertainty" at exactly the point where sampling uncertainty is
+    large — the overclaim this CI exists to prevent. Downstream consumers must
+    not treat a zero-width boundary interval as a confident estimate; the
+    frontend suppresses zero-width CIs for this reason. We keep the percentile
+    bootstrap (rather than switching estimators) so the CI stays comparable
+    with the rest of the bench's bootstrap machinery.
+    """
+    y = np.asarray(labels)
+    s = np.asarray(scores, dtype=float)
+    if y.shape[0] != s.shape[0]:
+        raise ValueError(f"labels ({y.shape[0]}) and scores ({s.shape[0]}) differ")
+    if len(np.unique(y)) < 2:
+        return (float("nan"), float("nan"))
+
+    rng = np.random.default_rng(seed)
+    n = y.shape[0]
+    aucs: List[float] = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        yb = y[idx]
+        if len(np.unique(yb)) < 2:
+            continue
+        aucs.append(float(roc_auc_score(yb, s[idx])))
+
+    if not aucs:
+        return (float("nan"), float("nan"))
+    tail = (1.0 - ci) / 2.0
+    lo = float(np.percentile(aucs, 100.0 * tail))
+    hi = float(np.percentile(aucs, 100.0 * (1.0 - tail)))
+    return (lo, hi)
+
+
+def auc_permutation_p(
+    labels: Sequence[int],
+    scores: Sequence[float],
+    n_perm: int = 2000,
+    seed: int = 42,
+) -> float:
+    """
+    One-sided permutation p-value for H0: AUC = 0.5 vs H1: AUC > 0.5.
+
+    Shuffles the labels n_perm times (breaking any score↔class association) and
+    measures how often a permuted AUC reaches the observed AUC. Uses the
+    add-one correction p = (1 + #{perm ≥ observed}) / (n_perm + 1), so p is
+    never exactly 0 and is bounded below by 1/(n_perm+1). A small p means the
+    probe still reads class above chance *after* ablation — i.e. the
+    harmfulness representation genuinely survived, not an artifact. Returns nan
+    if the input is single-class.
+    """
+    y = np.asarray(labels)
+    s = np.asarray(scores, dtype=float)
+    if y.shape[0] != s.shape[0]:
+        raise ValueError(f"labels ({y.shape[0]}) and scores ({s.shape[0]}) differ")
+    if len(np.unique(y)) < 2:
+        return float("nan")
+
+    observed = float(roc_auc_score(y, s))
+    rng = np.random.default_rng(seed)
+    count = 0
+    for _ in range(n_perm):
+        if float(roc_auc_score(rng.permutation(y), s)) >= observed:
+            count += 1
+    return float((count + 1) / (n_perm + 1))
+
+
+def bootstrap_discriminability_ci(
+    labels: Sequence[int],
+    scores: Sequence[float],
+    n_boot: int = 2000,
+    ci: float = 0.95,
+    seed: int = 42,
+) -> Tuple[float, float]:
+    """
+    Percentile bootstrap CI for |AUC − 0.5|.
+
+    Same resampling scheme as bootstrap_auc_ci — identical seed and draw order,
+    so the two are directly comparable — but folds each resampled AUC about
+    chance before taking percentiles.
+
+    Folding makes the statistic non-negative, which has one consequence worth
+    knowing: when the true AUC sits near 0.5, the folded distribution piles up
+    against 0 and the interval's lower bound goes to 0.0. That is the correct
+    reading ("consistent with no discrimination"), not a degenerate interval.
+
+    The genuine degeneracy is at the other end: an observed AUC pinned at
+    exactly 0.0 or 1.0 gives discriminability 0.5 in every resample that keeps
+    both classes, collapsing the interval to (0.5, 0.5). Callers must treat a
+    zero-width interval as an artifact of the estimator at small n, not as
+    certainty — the frontend suppresses it for that reason.
+    """
+    y = np.asarray(labels)
+    s = np.asarray(scores, dtype=float)
+    if y.shape[0] != s.shape[0]:
+        raise ValueError(f"labels ({y.shape[0]}) and scores ({s.shape[0]}) differ")
+    if len(np.unique(y)) < 2:
+        return (float("nan"), float("nan"))
+
+    rng = np.random.default_rng(seed)
+    n = y.shape[0]
+    values: List[float] = []
+    for _ in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        yb = y[idx]
+        if len(np.unique(yb)) < 2:
+            continue
+        values.append(abs(float(roc_auc_score(yb, s[idx])) - 0.5))
+
+    if not values:
+        return (float("nan"), float("nan"))
+    tail = (1.0 - ci) / 2.0
+    lo = float(np.percentile(values, 100.0 * tail))
+    hi = float(np.percentile(values, 100.0 * (1.0 - tail)))
+    return (lo, hi)
+
+
+def discriminability_permutation_p(
+    labels: Sequence[int],
+    scores: Sequence[float],
+    n_perm: int = 2000,
+    seed: int = 42,
+) -> float:
+    """
+    Two-sided permutation p-value for H0: AUC = 0.5 vs H1: AUC ≠ 0.5.
+
+    The test statistic is |AUC − 0.5|, so a probe that reads perfectly
+    backwards is as significant as one that reads perfectly forwards — which is
+    the whole point. Compare with auc_permutation_p, which only ever rewards
+    AUC > 0.5 and therefore reports a *large* p for a strongly inverted probe,
+    a result easily misread as "no signal".
+
+    Same add-one correction as the one-sided test:
+    p = (1 + #{|AUC_perm − 0.5| ≥ |AUC_obs − 0.5|}) / (n_perm + 1), so p is
+    bounded below by 1/(n_perm+1) and never exactly 0. Returns nan if the input
+    is single-class.
+    """
+    y = np.asarray(labels)
+    s = np.asarray(scores, dtype=float)
+    if y.shape[0] != s.shape[0]:
+        raise ValueError(f"labels ({y.shape[0]}) and scores ({s.shape[0]}) differ")
+    if len(np.unique(y)) < 2:
+        return float("nan")
+
+    observed = abs(float(roc_auc_score(y, s)) - 0.5)
+    rng = np.random.default_rng(seed)
+    count = 0
+    for _ in range(n_perm):
+        if abs(float(roc_auc_score(rng.permutation(y), s)) - 0.5) >= observed:
+            count += 1
+    return float((count + 1) / (n_perm + 1))
 
 
 # -----------------------------------------------------------------------------

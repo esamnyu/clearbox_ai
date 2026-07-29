@@ -156,15 +156,23 @@ class HerringCNA(Technique):
     def _make_neuron_zero_hook(
         self, neuron_indices: torch.Tensor
     ) -> Callable:
-        """Closure that zeros the selected MLP-post neuron columns in place."""
+        """Closure that zeros the selected MLP-post neuron columns in place.
 
-        def hook(activation, hook_):
+        The second parameter MUST be named `hook`: TransformerLens invokes hook
+        functions as `fn(tensor, hook=hook_point)` — by keyword, not position.
+        Naming it `hook_` raised "got an unexpected keyword argument 'hook'" and
+        made this the one technique that still failed the full bench run, the
+        same defect Wollschlager's cone hook had in the May run. Matches
+        `research.make_ablation_hook` and `Wollschlager._make_cone_hook`.
+        """
+
+        def neuron_zero_hook(activation, hook):
             # activation: [batch, seq_len, d_mlp]
             # neuron_indices: [k], Long
             activation[..., neuron_indices] = 0
             return activation
 
-        return hook
+        return neuron_zero_hook
 
     def make_ablation_hook(self) -> Tuple[str, Callable]:
         if (
