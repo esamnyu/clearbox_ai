@@ -113,6 +113,43 @@ function resetPipelineFactory(): void {
   currentPipelineFactory = defaultPipelineFactory;
 }
 
+/**
+ * Read the active factory.
+ *
+ * NOTE — the DI seam is currently vestigial: `loadModel` below constructs
+ * `GPT2LMHeadModel`/`AutoTokenizer` directly rather than going through the
+ * factory, so swapping the factory does not (yet) redirect model loading.
+ * The accessor exists so the seam is observable from tests and so the
+ * set/reset pair has a reader; wiring `loadModel` through it is a separate,
+ * behaviour-changing task.
+ * @internal
+ */
+function getPipelineFactory(): PipelineFactory {
+  return currentPipelineFactory;
+}
+
+/**
+ * Map a transformers.js progress status onto our narrower `LoadProgress`
+ * vocabulary. transformers emits 'initiate' | 'download' | 'progress' |
+ * 'done' | 'ready'; `LoadProgress` only models 'downloading' | 'loading' |
+ * 'ready'. The previous code cast the raw string straight across, which
+ * type-checked only because of the assertion and put values like 'initiate'
+ * into a field typed as never holding them.
+ */
+function toLoadStatus(status: string): LoadProgress["status"] {
+  switch (status) {
+    case "download":
+    case "downloading":
+    case "progress":
+      return "downloading";
+    case "ready":
+      return "ready";
+    default:
+      // 'initiate', 'done', and anything a future minor adds.
+      return "loading";
+  }
+}
+
 // helper to clean up the double token problem in greedy decoding
 function sampleToken(logits: Float32Array, temperature: number): number {
   // 1. Handle Temperature
@@ -215,12 +252,18 @@ const workerAPI: ModelWorkerAPI = {
         device: "wasm",
         progress_callback: (progress) => {
           if (onProgress) {
+            // transformers.js v3 types ProgressInfo as a discriminated union:
+            // only the 'progress' variant carries progress/loaded/total, and
+            // 'ready' carries no file. Narrow with `in` rather than casting to
+            // any, so a future variant that drops a field fails the build here
+            // instead of silently emitting undefined bytes to the UI.
+            const hasBytes = "progress" in progress;
             onProgress({
-              status: progress.status as LoadProgress["status"],
-              file: progress.file,
-              progress: progress.progress,
-              loaded: progress.loaded,
-              total: progress.total,
+              status: toLoadStatus(progress.status),
+              file: "file" in progress ? progress.file : undefined,
+              progress: hasBytes ? progress.progress : undefined,
+              loaded: hasBytes ? progress.loaded : undefined,
+              total: hasBytes ? progress.total : undefined,
             });
           }
         },
@@ -394,10 +437,10 @@ const workerAPI: ModelWorkerAPI = {
 
     // let currentTokenIds = inputs.input_ids; // Tensor of shape [1, seq_len]
     // Convert BigInt64Array to standard arrays for easy manipulation in the loop
-    let currentInputIds = Array.from(
+    const currentInputIds = Array.from(
       inputs.input_ids.data as BigInt64Array,
     ).map(Number);
-    let currentAttentionMask = Array.from(
+    const currentAttentionMask = Array.from(
       inputs.attention_mask.data as BigInt64Array,
     ).map(Number);
 
@@ -490,7 +533,8 @@ const workerAPI: ModelWorkerAPI = {
       const logits = output.logits;
 
       // grabbing logits for the last toke, need to handle the tensor data manually
-      const [batchSize, seqLen, vocabSize] = logits.dims;
+      // batch dim is always 1 here (single-prompt worker), so it's skipped.
+      const [, seqLen, vocabSize] = logits.dims;
       const data = logits.data as Float32Array; // assuming fp32
 
       // calc offset for last token vocab distribution
@@ -549,6 +593,7 @@ const workerAPI: ModelWorkerAPI = {
 const testAPI = {
   _setPipelineFactory: setPipelineFactory,
   _resetPipelineFactory: resetPipelineFactory,
+  _getPipelineFactory: getPipelineFactory,
 };
 
 // Expose the API via Comlink (includes test utilities)
