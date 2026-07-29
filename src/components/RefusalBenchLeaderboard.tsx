@@ -51,23 +51,79 @@ export function isDissociation(row: TechniqueResult): boolean {
   return Math.abs(row.delta_auc) <= AUC_THRESHOLD;
 }
 
+/** Two-sided normal quantile for a 95% criterion. */
+const Z_95 = 1.959964;
+
+/**
+ * The discriminability a probe has to beat before it means anything, given how
+ * many points the AUC was measured on.
+ *
+ * For raw AUC the chance level is the constant 0.5, which is why the legacy
+ * check `ci_lower > CHANCE_AUC` works. Folding to |AUC − 0.5| destroys that
+ * convenience: the folded statistic is non-negative, so its expected value
+ * under the null is *strictly positive* (a half-normal, mean ≈ 0.8·SE), and its
+ * bootstrap lower bound is above 0 essentially always. Testing `> 0` therefore
+ * accepts pure noise — it is not a weak test, it is close to no test at all.
+ *
+ * Under H0 (AUC = 0.5) the Mann–Whitney/Bamber null SE of AUC is
+ *
+ *     SE₀ = sqrt( (n₁ + n₀ + 1) / (12 · n₁ · n₀) )
+ *
+ * and the eval split is balanced by construction (harmful/harmless come from
+ * the same prompt pairs), so n₁ = n₀ = n/2. The returned threshold is Z·SE₀ —
+ * the magnitude chance alone produces at this sample size.
+ *
+ * Worked: n = 24 → SE₀ ≈ 0.120 → threshold ≈ 0.236, i.e. AUC must sit outside
+ * [0.264, 0.736]. At n = 10 → threshold ≈ 0.375. The bar being brutal at small
+ * n is the correct behaviour, not a defect.
+ *
+ * Returns null when n is missing, or so small that the threshold would exceed
+ * 0.5 — the maximum |AUC − 0.5| can take. Below about n = 6 that is what
+ * happens: chance alone can produce perfect-looking separation, so NO result
+ * could clear the bar. Reporting an unreachable threshold would make callers
+ * answer "did not survive" when the honest answer is "this eval set cannot
+ * distinguish anything". Null makes them say "unknown" instead.
+ */
+export function chanceDiscriminability(
+  nAucEval: number | null | undefined,
+): number | null {
+  if (nAucEval == null || !Number.isFinite(nAucEval) || nAucEval < 4) {
+    return null;
+  }
+  const n1 = Math.floor(nAucEval / 2);
+  const n0 = nAucEval - n1;
+  const se = Math.sqrt((n1 + n0 + 1) / (12 * n1 * n0));
+  const threshold = Z_95 * se;
+  // MAX_DISCRIMINABILITY is 0.5; a threshold at or above it is unreachable.
+  return threshold < 0.5 ? threshold : null;
+}
+
 // Did the harmfulness signal *demonstrably* survive ablation, or is the small
-// ΔAUC just noise at this eval size? Prefer the permutation p (post-ablation
-// AUC > chance at SIGNIFICANCE_ALPHA); fall back to "bootstrap CI lower bound
-// clears CHANCE_AUC". Returns null when neither stat is present (older cached
-// runs) so the caller can stay agnostic rather than overclaim.
+// ΔAUC just noise at this eval size? Prefer the two-sided permutation p on
+// discriminability; fall back to the discriminability interval clearing the
+// chance level for its sample size; then the legacy one-sided AUC fields.
+// Returns null when nothing usable is present (older cached runs) so the caller
+// can stay agnostic rather than overclaim.
 export function signalSurvived(row: TechniqueResult): boolean | null {
-  // Preferred: two-sided permutation p that discriminability exceeds 0. This is
-  // the only variant that credits an inverted probe, which still carries the
-  // harmfulness information. Measured live: Arditi's post-AUC of 0.35 is BELOW
-  // chance, so the legacy one-sided p is ~0.88 — indistinguishable from "no
-  // signal at all" unless you look at the direction too.
+  // Preferred: two-sided permutation p that discriminability exceeds chance.
+  // This is the only variant that credits an inverted probe, which still
+  // carries the harmfulness information. Measured live: Arditi's post-AUC of
+  // 0.35 is BELOW chance, so the legacy one-sided p is ~0.88 —
+  // indistinguishable from "no signal at all" unless you look at direction too.
   const dp = row.harmfulness_discriminability_post_p;
   if (dp != null && Number.isFinite(dp)) return dp < SIGNIFICANCE_ALPHA;
 
-  // Next best: does the discriminability interval clear zero?
+  // Next best: does the discriminability interval clear the chance level for
+  // this n? Calibrated, not a fixed epsilon — see chanceDiscriminability.
   const dLo = row.harmfulness_discriminability_post_ci?.[0];
-  if (dLo != null && Number.isFinite(dLo)) return dLo > 0;
+  if (dLo != null && Number.isFinite(dLo)) {
+    const threshold = chanceDiscriminability(row.n_auc_eval);
+    // No n means the interval cannot be calibrated. Say "unknown" rather than
+    // fall through to the legacy one-sided AUC test, which would answer a
+    // different question than the one this row's fields were computed for.
+    if (threshold == null) return null;
+    return dLo > threshold;
+  }
 
   // Legacy artifacts only, and knowingly one-sided: a strongly inverted probe
   // is reported here as "did not survive". Correct for the question the old
