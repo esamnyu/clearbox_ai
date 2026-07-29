@@ -65,8 +65,14 @@ export default function App() {
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const { status, loadProgress, initWorker, loadModel, generate } =
-    useModelStore();
+  const {
+    status,
+    loadProgress,
+    initWorker,
+    disposeWorker,
+    loadModel,
+    generate,
+  } = useModelStore();
   const analyze = useAnalysisStore((s) => s.analyze);
   const checkBackend = useAnalysisStore((s) => s.checkBackend);
   const backendStatus = useAnalysisStore((s) => s.backendStatus);
@@ -78,7 +84,12 @@ export default function App() {
   useEffect(() => {
     initWorker();
     checkBackend();
-  }, [initWorker, checkBackend]);
+    // Terminating on unmount is what makes this effect safe to run twice.
+    // Without it, StrictMode's deliberate double-invoke left an orphaned
+    // Worker per mount — each holding its own transformers.js instance, and
+    // each able to fire onerror into shared store state after being abandoned.
+    return () => disposeWorker();
+  }, [initWorker, disposeWorker, checkBackend]);
 
   useEffect(() => {
     // Fetch refusal pairs once the backend is reachable. The endpoint
@@ -259,9 +270,14 @@ export default function App() {
             </DefinedTerm>
           }
           tryThis={{
-            hint: "click 'run bench' (≈25 min on free CPU)",
+            // The rows below are a cached local run, not something the visitor
+            // can reproduce here: the deployed backend is free-tier CPU, where
+            // /refusal-bench times out on the heavier techniques (see
+            // docs/DEPLOYMENT.md §1e). Promising "six rows render" from a click
+            // was a claim the deploy cannot keep.
+            hint: "read down the table",
             outcome:
-              "six rows render. Where Δ refusal rate is big but Δ AUC is small, the method only suppressed speech, not understanding.",
+              "where Δ refusal rate is big but Δ AUC is small, the method only suppressed speech, not understanding. 'Run bench' re-runs live against a local backend; on the free CPU deploy the heavier techniques time out.",
           }}
         >
           <RefusalBenchLeaderboard
