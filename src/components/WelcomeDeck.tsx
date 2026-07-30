@@ -83,13 +83,24 @@ export default function WelcomeDeck() {
         >
           A
         </span>
-        n interpretability workbench for the smaller open language models — a
-        place to watch what happens inside a transformer, then change one thing
-        and watch again. Six published methods for stripping a model of its
-        refusal are wired here side-by-side; one of them, almost certainly, is a
-        fluent gag rather than a genuine intervention. Below, what the page
-        expects of you.
+        language model is normally a black box: text goes in, text comes out.
+        Mechanistic interpretability is the practice of opening it — reading the
+        numbers passing between its layers to work out <em>why</em> it said what
+        it said. This page is a workbench for doing that on GPT-2, live, in this
+        tab. Nothing is uploaded; the model runs on your own machine.
       </p>
+
+      <p className="mt-5 font-serif text-[1.05rem] italic leading-[1.7] text-slate-300 sm:text-[1.1rem]">
+        It is also an experiment. Six published techniques claim to remove a
+        safety-trained model&apos;s ability to refuse. §VII runs all six against
+        the same test and asks a sharper question than &ldquo;did it stop
+        refusing?&rdquo; — it asks whether the model still <em>knows</em> the
+        request was harmful. The finding, stated plainly below, is that stopping
+        the refusal and removing the knowledge are not the same thing, and the
+        published methods mostly do the first.
+      </p>
+
+      <FindingCallout />
 
       <ol
         className="mt-7 space-y-3 font-serif text-[0.95rem] italic leading-relaxed text-slate-400 sm:text-[1rem]"
@@ -138,6 +149,51 @@ export default function WelcomeDeck() {
         </button>
       </p>
     </aside>
+  );
+}
+
+/**
+ * States the result up front.
+ *
+ * The bench table in §VII is six rows of deltas and confidence intervals. A
+ * reader who already works on refusal directions can read the conclusion out
+ * of it; nobody else can, and the conclusion is the most interesting thing on
+ * the page. So it is written down, with the caveat that makes it honest —
+ * n=20 gives intervals wide enough that "no technique passed" is partly a
+ * statement about the power of the test.
+ */
+function FindingCallout() {
+  return (
+    <div className="mt-7 border-l-2 border-vermillion/60 py-1 pl-5">
+      <p className="label-caps text-vermillion">The result</p>
+      <p className="mt-2 font-serif text-[1.02rem] leading-[1.65] text-slate-300">
+        Across all six techniques on Llama-3.2-1B,{" "}
+        <strong className="font-display font-normal text-graphite">
+          none met the preregistered bar for removing the model&apos;s internal
+          sense of harm.
+        </strong>{" "}
+        The shape of the failure is the interesting part. The only two
+        techniques whose harm signal demonstrably survived — Cheng and Herring,
+        where a permutation test rejects chance at p&nbsp;=&nbsp;.025 and .008 —
+        are precisely the two that <em>never reduced refusal at all</em>. The
+        four that did collapse refusal left too little signal to measure either
+        way.
+      </p>
+      <p className="mt-3 font-serif text-[1.02rem] leading-[1.65] text-slate-300">
+        So this run does not show that ablation is a fluent gag. It shows
+        something narrower and, for anyone planning the next experiment, more
+        useful: at this sample size the test cannot tell the two apart. For all
+        four refusal-collapsing methods the post-ablation AUC sits above chance
+        by point estimate (0.60–0.72) and the interval runs down past it.
+      </p>
+      <p className="mt-3 font-serif text-sm italic leading-relaxed text-slate-500">
+        n=20 pairs per class — 5 eval prompts, 10 AUC points. Bootstrap CIs are
+        correspondingly wide, so &ldquo;no technique passed&rdquo; is in part a
+        statement about the power of the test; a higher-power run is the obvious
+        next step. Arditi and COSMIC resolve to the same direction here and are
+        not independent evidence.
+      </p>
+    </div>
   );
 }
 

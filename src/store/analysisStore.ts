@@ -32,6 +32,8 @@ import {
   getLogitLens,
   getGradients,
   getHealth,
+  loadModel as apiLoadModel,
+  BACKEND_DEFAULT_MODEL,
   getContrastivePairs,
   getSteeringVector,
   generateSteered,
@@ -80,7 +82,14 @@ interface AnalysisState {
   headGrid: HeadGridCell[][] | null;
 
   // Backend state
-  backendStatus: "unknown" | "connected" | "disconnected";
+  //
+  // "waking" is its own state because the free HF Space sleeps after ~48h idle
+  // and takes 30-60s to cold-start. Without it a first-time visitor sees
+  // "unreachable" — indistinguishable from genuinely broken — for the whole
+  // wake. See checkBackend below.
+  backendStatus: "unknown" | "waking" | "connected" | "disconnected";
+  /** Model the *backend* holds, e.g. "gpt2-small". Null until /load succeeds. */
+  backendModel: string | null;
   logitLensResult: LogitLensResponse | null;
   gradientResult: GradientsResponse | null;
   backendError: string | null;
@@ -143,6 +152,7 @@ const initialState = {
   selectedStep: 0,
   headGrid: null,
   backendStatus: "unknown" as const,
+  backendModel: null,
   logitLensResult: null,
   gradientResult: null,
   backendError: null,
@@ -164,6 +174,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   selectedStep: initialState.selectedStep,
   headGrid: initialState.headGrid,
   backendStatus: initialState.backendStatus,
+  backendModel: initialState.backendModel,
   logitLensResult: initialState.logitLensResult,
   gradientResult: initialState.gradientResult,
   backendError: initialState.backendError,
@@ -186,8 +197,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     // token-count-vs-seqLen mismatch, and the throw (caught in
     // App.handleGenerate) silently clears the whole panel — the original bug.
     const firstAttn = attentions.values().next().value as
-      | TensorView
-      | undefined;
+      TensorView | undefined;
     const stepSeqLen = firstAttn ? firstAttn.shape[1] : result.tokens.length;
     const stepTokens = result.tokens.slice(0, stepSeqLen);
 
@@ -268,13 +278,43 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
 
   checkBackend: async () => {
+    // Two steps, and the second one is the whole point. A bare health check
+    // passes against a backend holding no model, which is exactly the state a
+    // freshly-woken Space is in — every downstream panel then fails with
+    // "No model loaded. Call load_model() first." The visitor sees a green
+    // status light and four broken sections. So: ping, then load.
+    set({ backendStatus: "waking", backendError: null });
     try {
       await getHealth();
-      set({ backendStatus: "connected", backendError: null });
     } catch {
       set({
         backendStatus: "disconnected",
-        backendError: "Backend not reachable",
+        backendModel: null,
+        backendError:
+          "Backend unreachable. If this is the public deploy, the free Space " +
+          "may be cold-starting — retry in a minute.",
+      });
+      return;
+    }
+
+    try {
+      // 180s: a cold Space downloads gpt2-small from the Hub on first load.
+      const res = await apiLoadModel(BACKEND_DEFAULT_MODEL, 180_000);
+      set({
+        backendStatus: "connected",
+        backendModel: res.model ?? BACKEND_DEFAULT_MODEL,
+        backendError: null,
+      });
+    } catch (e) {
+      // Reachable but model-less. Degraded, not dead: the cached bench table
+      // in §VII still renders, so say what does and doesn't work.
+      set({
+        backendStatus: "connected",
+        backendModel: null,
+        backendError:
+          `Backend is up but could not load ${BACKEND_DEFAULT_MODEL} ` +
+          `(${e instanceof Error ? e.message : String(e)}). Layer predictions, ` +
+          `token importance and steering need it; the cached bench still renders.`,
       });
     }
   },

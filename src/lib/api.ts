@@ -5,9 +5,28 @@
  * All responses are validated for HTTP status before returning typed data.
  */
 
-const API_BASE = (
-  import.meta.env.VITE_API_BASE ?? "http://localhost:8000"
-).replace(/\/+$/, "");
+/**
+ * Public backend. Used whenever VITE_API_BASE is unset *and* we are not on
+ * localhost — i.e. the deployed frontend works with zero env configuration.
+ * Previously the fallback was localhost:8000 unconditionally, so any deploy
+ * missing the env var silently pointed every visitor's browser at their own
+ * machine and reported the backend as down.
+ */
+const PUBLIC_API_BASE = "https://lymnal-neuroscope-api.hf.space";
+
+function resolveApiBase(): string {
+  const configured = import.meta.env.VITE_API_BASE;
+  if (configured) return configured;
+  const isLocalDev =
+    typeof window !== "undefined" &&
+    /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+  return isLocalDev ? "http://localhost:8000" : PUBLIC_API_BASE;
+}
+
+const API_BASE = resolveApiBase().replace(/\/+$/, "");
+
+/** Model the backend is asked to hold. Ungated, ~124M, fits the free CPU tier. */
+export const BACKEND_DEFAULT_MODEL = "gpt2-small";
 
 // ============================================================================
 // Response Interfaces
@@ -281,8 +300,15 @@ export function getHealth(): Promise<HealthResponse> {
 }
 
 /** POST /load — Load a model by name. */
-export function loadModel(modelName: string): Promise<LoadModelResponse> {
-  return postJson<LoadModelResponse>("/load", { model_name: modelName });
+export function loadModel(
+  modelName: string,
+  timeoutMs?: number,
+): Promise<LoadModelResponse> {
+  return postJson<LoadModelResponse>(
+    "/load",
+    { model_name: modelName },
+    timeoutMs,
+  );
 }
 
 /** POST /logit-lens — Run logit lens analysis on a prompt. */

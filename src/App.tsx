@@ -10,6 +10,7 @@ import RefusalBenchLeaderboard from "./components/RefusalBenchLeaderboard";
 import WelcomeDeck from "./components/WelcomeDeck";
 import DefinedTerm from "./components/DefinedTerm";
 import TryThis from "./components/TryThis";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { getRefusalPairs } from "./lib/api";
 import type { TensorWithMetadata } from "./engine/types";
 
@@ -76,6 +77,8 @@ export default function App() {
   const analyze = useAnalysisStore((s) => s.analyze);
   const checkBackend = useAnalysisStore((s) => s.checkBackend);
   const backendStatus = useAnalysisStore((s) => s.backendStatus);
+  const backendModel = useAnalysisStore((s) => s.backendModel);
+  const backendError = useAnalysisStore((s) => s.backendError);
   const steeringLayer = useAnalysisStore((s) => s.steeringLayer);
 
   const [refusalHarmful, setRefusalHarmful] = useState<string[]>([]);
@@ -139,12 +142,28 @@ export default function App() {
       <main className="relative mx-auto max-w-[88rem] px-6 pb-32 pt-12 sm:px-10 lg:px-16">
         <Masthead
           modelStatus={status}
-          loadProgress={loadProgress}
           backendStatus={backendStatus}
-          onLoadModel={() => loadModel("Xenova/gpt2")}
+          backendModel={backendModel}
         />
 
         <WelcomeDeck />
+
+        <LoadGate
+          modelStatus={status}
+          loadProgress={loadProgress}
+          onLoadModel={() => loadModel("Xenova/gpt2")}
+        />
+
+        {backendError && backendStatus !== "waking" && (
+          <div className="mb-16 border-l-2 border-amber-500/60 bg-paper/30 px-5 py-4">
+            <p className="font-serif text-sm italic leading-relaxed text-slate-400">
+              <span className="not-italic font-display text-amber-400">
+                Backend notice ·{" "}
+              </span>
+              {backendError}
+            </p>
+          </div>
+        )}
 
         <Section
           number="I"
@@ -169,19 +188,20 @@ export default function App() {
           </PrimaryAction>
         </Section>
 
-        {(genText || stats) && (
-          <Section
-            number="II"
-            title="Generation"
-            tryThis={{
-              hint: "compare what came out with the telemetry on the right",
-              outcome:
-                "each attention tensor and hidden state captured here feeds the panels below",
-            }}
-          >
-            <GenerationView text={genText} stats={stats} />
-          </Section>
-        )}
+        {/* Always rendered. Gating this on `genText || stats` meant a
+            first-time visitor read I, III, IV, V… and reasonably concluded a
+            section had failed to load. It now shows its own empty state. */}
+        <Section
+          number="II"
+          title="Generation"
+          tryThis={{
+            hint: "compare what came out with the telemetry on the right",
+            outcome:
+              "each attention tensor and hidden state captured here feeds the panels below",
+          }}
+        >
+          <GenerationView text={genText} stats={stats} />
+        </Section>
 
         <Section
           number="III"
@@ -300,19 +320,13 @@ export default function App() {
 
 interface MastheadProps {
   modelStatus: "idle" | "loading" | "ready" | "error";
-  loadProgress: number;
-  backendStatus: "unknown" | "connected" | "disconnected";
-  onLoadModel: () => void;
+  backendStatus: "unknown" | "waking" | "connected" | "disconnected";
+  backendModel: string | null;
 }
 
-function Masthead({
-  modelStatus,
-  loadProgress,
-  backendStatus,
-  onLoadModel,
-}: MastheadProps) {
+function Masthead({ modelStatus, backendStatus, backendModel }: MastheadProps) {
   return (
-    <header className="mb-20 pb-8">
+    <header className="mb-12">
       <div className="flex flex-col items-start gap-2">
         <span className="label-caps text-vermillion">
           Mechanistic Interpretability
@@ -348,7 +362,7 @@ function Masthead({
             modelStatus === "ready"
               ? "gpt2 · 124M · loaded"
               : modelStatus === "loading"
-                ? `loading · ${loadProgress.toFixed(0)}%`
+                ? "downloading…"
                 : modelStatus === "error"
                   ? "load failed"
                   : "not loaded"
@@ -357,43 +371,123 @@ function Masthead({
         <StatusInline
           label="Backend"
           status={
-            backendStatus === "connected"
+            backendStatus === "connected" && backendModel
               ? "good"
-              : backendStatus === "unknown"
+              : backendStatus === "connected" || backendStatus === "waking"
                 ? "pending"
-                : "down"
+                : backendStatus === "unknown"
+                  ? "pending"
+                  : "down"
           }
           detail={
-            backendStatus === "connected"
-              ? "transformerlens · ready"
-              : backendStatus === "disconnected"
-                ? "unreachable"
-                : "checking…"
+            backendStatus === "connected" && backendModel
+              ? `transformerlens · ${backendModel}`
+              : backendStatus === "connected"
+                ? "up · no model"
+                : backendStatus === "waking"
+                  ? "waking the space…"
+                  : backendStatus === "disconnected"
+                    ? "unreachable"
+                    : "checking…"
           }
         />
+      </div>
+    </header>
+  );
+}
 
-        {modelStatus === "idle" && (
+// ──────────────────────────────────────────────────────────────
+// LoadGate — the one action a newcomer must take, made unmissable
+//
+// This used to be a 13px text link in the top-right corner of the status
+// row: the highest-stakes control on the page styled as the lowest-priority
+// one, with no hint that clicking it pulls ~500 MB. Everything below §I is
+// inert until it is pressed, so it now sits in the reading column at full
+// width and says what it costs before you commit.
+// ──────────────────────────────────────────────────────────────
+
+function LoadGate({
+  modelStatus,
+  loadProgress,
+  onLoadModel,
+}: {
+  modelStatus: "idle" | "loading" | "ready" | "error";
+  loadProgress: number;
+  onLoadModel: () => void;
+}) {
+  if (modelStatus === "ready") return null;
+
+  return (
+    <div className="mb-16 border border-rule bg-paper/40 px-6 py-6 sm:px-8 sm:py-7">
+      {modelStatus === "idle" && (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="max-w-xl">
+            <p className="font-display text-lg text-graphite">
+              Start here — load GPT-2 into this browser tab.
+            </p>
+            <p className="mt-1.5 font-serif text-sm italic leading-relaxed text-slate-400">
+              A one-time ~500 MB download, cached by the browser afterwards.
+              Usually 30&nbsp;s–2&nbsp;min. Nothing you type is sent anywhere:
+              inference runs on your own hardware via WebGPU.
+            </p>
+          </div>
           <button
             type="button"
             onClick={onLoadModel}
-            className="group ml-auto inline-flex items-center gap-2 font-display text-sm italic text-cerulean-light transition-colors hover:text-cerulean-light/80"
+            className="group inline-flex flex-shrink-0 items-center gap-2 border border-vermillion/50 px-5 py-3 font-display text-base text-vermillion-light transition-colors hover:border-vermillion-light hover:bg-vermillion/10"
           >
-            <span className="text-base leading-none">↪</span>
-            <span className="border-b border-dotted border-cerulean/40 pb-px group-hover:border-cerulean-light">
-              load gpt-2 (124M)
+            <span className="text-lg leading-none" aria-hidden>
+              ↪
             </span>
+            load gpt-2 · 124M
           </button>
-        )}
-        {modelStatus === "loading" && (
-          <div className="ml-auto h-px w-48 overflow-hidden bg-rule">
+        </div>
+      )}
+
+      {modelStatus === "loading" && (
+        <div>
+          <div className="flex items-baseline justify-between gap-4">
+            <p className="font-display text-lg text-graphite">
+              Downloading GPT-2 weights…
+            </p>
+            <span className="font-mono text-sm tabular-nums text-cerulean-light">
+              {loadProgress.toFixed(0)}%
+            </span>
+          </div>
+          <div className="mt-4 h-px w-full overflow-hidden bg-rule">
             <div
               className="h-full bg-cerulean transition-all duration-300"
               style={{ width: `${loadProgress}%` }}
             />
           </div>
-        )}
-      </div>
-    </header>
+          <p className="mt-3 font-serif text-sm italic text-slate-500">
+            First visit only — the browser caches the weights for next time.
+          </p>
+        </div>
+      )}
+
+      {modelStatus === "error" && (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="max-w-xl">
+            <p className="font-display text-lg text-vermillion-light">
+              The model failed to load.
+            </p>
+            <p className="mt-1.5 font-serif text-sm italic leading-relaxed text-slate-400">
+              This usually means the browser lacks WebGPU or ran out of memory.
+              Chrome and Edge 113+ work; Safari needs 18+. Everything below that
+              reads from the backend or the cached bench still works.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onLoadModel}
+            className="group inline-flex flex-shrink-0 items-center gap-2 border border-rule px-5 py-3 font-display text-base text-slate-300 transition-colors hover:border-vermillion-light hover:text-vermillion-light"
+          >
+            retry
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -463,7 +557,9 @@ function Section({
           className="mb-8 ml-9"
         />
       ) : null}
-      {children}
+      {/* Per-section rather than per-app: a throw in the attention heatmap
+          should not take the bench table down with it. */}
+      <ErrorBoundary section={`Section ${number}`}>{children}</ErrorBoundary>
     </section>
   );
 }
@@ -598,10 +694,10 @@ function Colophon() {
     <footer className="mt-32 border-t border-rule pt-8">
       <div className="flex flex-wrap items-baseline justify-between gap-4 font-serif text-xs italic text-slate-500">
         <div>
-          NeuroScope <span className="not-italic text-slate-700">·</span> set in
-          Fraunces, Newsreader &amp; JetBrains Mono{" "}
-          <span className="not-italic text-slate-700">·</span> for the Anthropic
-          Fellows portfolio
+          NeuroScope <span className="not-italic text-slate-700">·</span> an
+          open interpretability workbench, MIT-licensed{" "}
+          <span className="not-italic text-slate-700">·</span> set in Fraunces,
+          Newsreader &amp; JetBrains Mono
         </div>
         <div className="font-mono not-italic">
           <a
