@@ -3,11 +3,11 @@
 > Goal: NeuroScope live at a public URL a reviewer can click, in an afternoon, at zero cost.
 > Split: **HuggingFace Spaces** (backend, free CPU) + **Vercel** (frontend, free).
 
-**Read this first — what is already done.** The April 2026 version of this guide
-told you to write a Dockerfile, patch CORS, and add a `VITE_API_BASE` env var.
-All three shipped months ago. Following those steps now would duplicate or
-regress working code. What remains is *account creation and pushing*, which only
-Ethan can do. This rewrite reflects the repo as it actually stands.
+**Read this first — what is already done.** This table is the source of truth;
+§1 below is stale in one important respect and is kept only as reference for
+rebuilding the Space from scratch. **The backend is live.** The Space exists, is
+`RUNNING` on `cpu-basic`, and serves all 14 routes at
+`https://lymnal-neuroscope-api.hf.space` (verify: `GET /` → `{"status":"ok"}`).
 
 | Thing | State | Where |
 |---|---|---|
@@ -18,10 +18,31 @@ Ethan can do. This rewrite reflects the repo as it actually stands.
 | Frontend API base URL | ✅ committed | `src/lib/api.ts` — `VITE_API_BASE` |
 | Vercel build config | ✅ committed | `vercel.json` |
 | README rewrite | ✅ done | `README.md` |
-| **HF Space created** | ❌ **not done** | §1 below |
-| **Vercel project created** | ❌ **not done** | §2 below |
-| Screenshot / GIF in README | ❌ not done | §4 |
+| **HF Space created** | ✅ **live** | `lymnal/neuroscope-api`, docker SDK, cpu-basic |
+| **`ALLOWED_ORIGINS` set on the Space** | ✅ **set to `*`** | see §1f |
+| Screenshot in README | ✅ done | `docs/assets/{hero,bench}.png` |
+| **Vercel project created** | ❌ **not done** | §2 below — needs `vercel login` |
 | Loom walkthrough | ❌ not done | Ethan |
+
+### §1f — CORS on the live Space
+
+`ALLOWED_ORIGINS` is set to `*`. The API is public, unauthenticated, sets no
+cookies, and runs with `allow_credentials=False`, so a browser-origin allowlist
+is not the abuse boundary — anything that would abuse the free CPU can do it
+with a direct request, which CORS never sees. The upside is that any frontend
+origin (preview deploys included) works without re-configuring the Space.
+
+To tighten it to a specific frontend later:
+
+```bash
+curl -X POST -H "Authorization: Bearer $HF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"key":"ALLOWED_ORIGINS","value":"https://<your-app>.vercel.app,http://localhost:3001"}' \
+  https://huggingface.co/api/spaces/lymnal/neuroscope-api/variables
+```
+
+Setting a variable restarts the Space. That drops the loaded model, which is
+harmless — the frontend loads one on connect (see `checkBackend` in
+`src/store/analysisStore.ts`).
 
 ---
 
