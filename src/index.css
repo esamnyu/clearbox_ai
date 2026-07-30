@@ -4,13 +4,32 @@
 
 /* Custom base styles */
 @layer base {
+  html {
+    background-color: #0d0e14;
+  }
   body {
     @apply antialiased;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: "Newsreader", ui-serif, Georgia, serif;
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+    background-color: #0d0e14;
+    color: #e9eaf0;
   }
 
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-feature-settings: "ss01" 1, "ss02" 1, "zero" 1;
+  }
+
+  /* Refined focus rings — vermillion hairline, not chunky default */
+  *:focus-visible {
+    outline: 1px solid #bd4931;
+    outline-offset: 2px;
+  }
+
+  /* Text selection — manuscript-margin-correction feel */
+  ::selection {
+    background-color: rgba(189, 73, 49, 0.30);
+    color: #ffffff;
   }
   :root {
     --background: 0 0% 100%;
@@ -88,6 +107,118 @@
   @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
+  }
+
+  /* ─── Editorial design system primitives ─────────────────────── */
+
+  /* Small-caps section label, vermillion or cerulean accent */
+  .label-caps {
+    @apply font-display uppercase tracking-[0.32em] text-[0.65rem];
+  }
+
+  /* Inline horizontal hairline that fills available space */
+  .rule-flex {
+    @apply h-px flex-1 bg-rule;
+  }
+
+  /* Editorial card — used in place of the rounded slate boxes.
+     Less rounded, paper-tone, with a thin hairline border. */
+  .card-paper {
+    background-color: #13141c;
+    border: 1px solid #23252f;
+    border-radius: 4px;
+  }
+
+  /* ─── Defined term (footnote) popover ───────────────────────── */
+  /* Inline term with a dotted underline + a slate-500 superscript
+     dagger. On hover/focus/pin a paper-tone popover fades in beneath
+     the term with the definition in italic Newsreader. */
+  .defined-term__trigger {
+    text-decoration: underline dotted #475569;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 4px;
+    transition: text-decoration-color 160ms ease;
+  }
+  .defined-term:hover .defined-term__trigger,
+  .defined-term__trigger:focus-visible,
+  .defined-term__trigger[aria-expanded="true"] {
+    text-decoration-color: #bd4931;
+  }
+  .defined-term__popover {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: 0;
+    z-index: 30;
+    display: block;
+    width: min(320px, 88vw);
+    padding: 0.875rem 1rem;
+    background-color: #13141c;
+    border: 1px solid #23252f;
+    border-radius: 2px;
+    font-family: "Newsreader", ui-serif, Georgia, serif;
+    font-style: italic;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #cbd0dd;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-2px);
+    transition:
+      opacity 220ms ease,
+      visibility 220ms ease,
+      transform 220ms ease;
+  }
+  .defined-term:hover .defined-term__popover,
+  .defined-term__trigger:focus-visible ~ .defined-term__popover,
+  .defined-term__popover[data-pinned="true"] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+  .defined-term__def {
+    display: block;
+  }
+  .defined-term__lesson {
+    display: inline-block;
+    margin-top: 0.5rem;
+    font-family: "JetBrains Mono", monospace;
+    font-style: normal;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
+    color: #d76b54;
+    text-decoration: underline dotted rgba(189, 73, 49, 0.4);
+    text-underline-offset: 3px;
+    transition: color 160ms ease;
+  }
+  .defined-term__lesson:hover {
+    color: #e9876f;
+  }
+
+  /* Atmospheric texture overlay — radial bloom + film grain */
+  .atmosphere {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .atmosphere::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      radial-gradient(circle at 12% -5%, rgba(189, 73, 49, 0.18), transparent 38%),
+      radial-gradient(circle at 90% 110%, rgba(56, 116, 156, 0.14), transparent 42%);
+    mix-blend-mode: screen;
+    opacity: 0.7;
+  }
+  .atmosphere::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.9'/></svg>");
+    mix-blend-mode: overlay;
+    opacity: 0.03;
   }
 }
 

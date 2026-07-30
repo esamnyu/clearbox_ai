@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+.env
+.env.local
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.git/
+.gitignore

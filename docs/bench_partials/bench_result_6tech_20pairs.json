@@ -1,0 +1,88 @@
+{
+  "model_name": "meta-llama/Llama-3.2-1B-Instruct",
+  "layer": 8,
+  "n_extraction_pairs": 15,
+  "n_eval_prompts": 5,
+  "probe_train_auc": 1.0,
+  "probe_test_auc": 1.0,
+  "results": [
+    {
+      "name": "Arditi (single direction)",
+      "paper_url": "https://arxiv.org/abs/2406.11717",
+      "layer_used": 8,
+      "refusal_rate_baseline": 0.6,
+      "refusal_rate_ablated": 0.2,
+      "delta_refusal_rate": -0.39999999999999997,
+      "harmfulness_auc_pre": 0.9600000000000001,
+      "harmfulness_auc_post": 0.76,
+      "delta_auc": -0.20000000000000007,
+      "elapsed_seconds": 211.38314294815063,
+      "error": null
+    },
+    {
+      "name": "wollschlager",
+      "paper_url": "",
+      "layer_used": 8,
+      "refusal_rate_baseline": NaN,
+      "refusal_rate_ablated": NaN,
+      "delta_refusal_rate": NaN,
+      "harmfulness_auc_pre": NaN,
+      "harmfulness_auc_post": NaN,
+      "delta_auc": NaN,
+      "elapsed_seconds": 174.07835984230042,
+      "error": "HTTP Error 500: Internal Server Error"
+    },
+    {
+      "name": "cosmic",
+      "paper_url": "",
+      "layer_used": 8,
+      "refusal_rate_baseline": NaN,
+      "refusal_rate_ablated": NaN,
+      "delta_refusal_rate": NaN,
+      "harmfulness_auc_pre": NaN,
+      "harmfulness_auc_post": NaN,
+      "delta_auc": NaN,
+      "elapsed_seconds": 600.1783590316772,
+      "error": "The read operation timed out"
+    },
+    {
+      "name": "cheng",
+      "paper_url": "",
+      "layer_used": 8,
+      "refusal_rate_baseline": NaN,
+      "refusal_rate_ablated": NaN,
+      "delta_refusal_rate": NaN,
+      "harmfulness_auc_pre": NaN,
+      "harmfulness_auc_post": NaN,
+      "delta_auc": NaN,
+      "elapsed_seconds": 600.1501750946045,
+      "error": "The read operation timed out"
+    },
+    {
+      "name": "maskey",
+      "paper_url": "",
+      "layer_used": 8,
+      "refusal_rate_baseline": NaN,
+      "refusal_rate_ablated": NaN,
+      "delta_refusal_rate": NaN,
+      "harmfulness_auc_pre": NaN,
+      "harmfulness_auc_post": NaN,
+      "delta_auc": NaN,
+      "elapsed_seconds": 359.96646189689636,
+      "error": "HTTP Error 500: Internal Server Error"
+    },
+    {
+      "name": "herring",
+      "paper_url": "",
+      "layer_used": 8,
+      "refusal_rate_baseline": NaN,
+      "refusal_rate_ablated": NaN,
+      "delta_refusal_rate": NaN,
+      "harmfulness_auc_pre": NaN,
+      "harmfulness_auc_post": NaN,
+      "delta_auc": NaN,
+      "elapsed_seconds": 142.91939187049866,
+      "error": "HTTP Error 500: Internal Server Error"
+    }
+  ]
+}

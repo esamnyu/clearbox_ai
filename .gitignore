@@ -6,6 +6,8 @@ node_modules/
 # Build outputs
 dist/
 build/
+# tsc --build incremental cache; regenerated on every typecheck
+*.tsbuildinfo
 
 # Environment
 .env
@@ -25,6 +27,11 @@ yarn-error.log*
 *.swp
 *.swo
 *~
+.claude/
+
+# Stray workspace / binary docs (source of truth is the .md files)
+docs/*.code-workspace
+RESEARCH_STRATEGY.docx
 
 # OS
 .DS_Store
@@ -42,4 +49,12 @@ coverage/
 
 # Python stuff
 .venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
+docs/bench_partials_local/*.json

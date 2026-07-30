@@ -32,9 +32,16 @@
  * @module store/modelStore
  */
 
-import { create } from 'zustand';
-import * as Comlink from 'comlink';
-import type { ModelWorkerAPI, ModelStatus, ModelId, TokenizationResult, LoadProgress, GenerationResult } from '../engine/types';
+import { create } from "zustand";
+import * as Comlink from "comlink";
+import type {
+  ModelWorkerAPI,
+  ModelStatus,
+  ModelId,
+  TokenizationResult,
+  LoadProgress,
+  GenerationResult,
+} from "../engine/types";
 
 /**
  * Shape of the model store state and actions.
@@ -66,12 +73,26 @@ interface ModelState {
   /** Reference to the Web Worker (set by initWorker) */
   worker: Comlink.Remote<ModelWorkerAPI> | null;
 
+  /**
+   * The underlying Worker behind `worker`. Kept because a Comlink proxy cannot
+   * be terminated — without a handle to the raw Worker there is no way to free
+   * one, and every orphan holds its own copy of transformers.js (and, once
+   * loaded, its own ~500 MB GPT-2).
+   */
+  rawWorker: Worker | null;
+
   // ─────────────────────────────────────────────────────────────────────────
   // ACTIONS
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** Initialize the Web Worker. Must be called once before loading models. */
+  /**
+   * Initialize the Web Worker. Idempotent: calling it while a worker is alive
+   * is a no-op rather than a second spawn.
+   */
   initWorker: () => void;
+
+  /** Terminate the worker and release its Comlink proxy. Safe to call twice. */
+  disposeWorker: () => void;
 
   /** Download and load a model by ID. Updates status and progress during load. */
   loadModel: (modelId: ModelId) => Promise<void>;
@@ -88,43 +109,77 @@ interface ModelState {
 
 export const useModelStore = create<ModelState>((set, get) => ({
   // Initial state
-  status: 'idle',
+  status: "idle",
   modelId: null,
   loadProgress: 0,
   error: null,
   tokens: [],
   tokenIds: [],
   worker: null,
+  rawWorker: null,
 
   /**
    * Initialize the Web Worker for model inference.
-   * Includes error handling for worker creation failures.
+   *
+   * Idempotent by design. React StrictMode double-invokes mount effects in dev
+   * specifically to surface effects that allocate without cleaning up, and this
+   * one used to spawn a fresh Worker on every call with no way to free the old
+   * one. The observable damage was worse than a leak: an orphaned worker whose
+   * module fetch was aborted still fired `onerror`, and the handler set a
+   * GLOBAL `status: 'error'` — so a dead worker could knock the live UI into an
+   * error state it never recovered from. That is the "Worker error: [object
+   * Event]" seen in the console alongside repeated aborted fetches of
+   * worker.ts.
    */
   initWorker: () => {
+    if (get().rawWorker) return; // already alive; don't spawn a second
+
     try {
       const worker = new Worker(
-        new URL('../engine/worker.ts', import.meta.url),
-        { type: 'module' }
+        new URL("../engine/worker.ts", import.meta.url),
+        { type: "module" },
       );
 
-      // Handle worker-level errors (script load failures, uncaught exceptions)
+      // Handle worker-level errors (script load failures, uncaught exceptions).
+      // Only report if THIS worker is still the active one — an orphan being
+      // torn down must not clobber the state of its replacement.
       worker.onerror = (event) => {
-        console.error('Worker error:', event);
+        if (get().rawWorker !== worker) return;
+        console.error("Worker error:", event);
         set({
-          status: 'error',
-          error: `Worker error: ${event.message || 'Unknown worker error'}`,
+          status: "error",
+          error: `Worker error: ${event.message || "Unknown worker error"}`,
         });
       };
 
       const wrappedWorker = Comlink.wrap<ModelWorkerAPI>(worker);
-      set({ worker: wrappedWorker });
+      set({ worker: wrappedWorker, rawWorker: worker });
     } catch (err) {
-      console.error('Failed to initialize worker:', err);
+      console.error("Failed to initialize worker:", err);
       set({
-        status: 'error',
+        status: "error",
         error: `Failed to initialize worker: ${String(err)}`,
       });
     }
+  },
+
+  /**
+   * Terminate the worker and release its Comlink proxy.
+   *
+   * `onerror` is detached first: terminate() can itself surface an error event
+   * for an in-flight module fetch, and we do not want a worker we deliberately
+   * killed reporting itself as a failure. Safe to call when nothing is running.
+   */
+  disposeWorker: () => {
+    const { worker, rawWorker } = get();
+    if (rawWorker) {
+      rawWorker.onerror = null;
+      rawWorker.terminate();
+    }
+    // Free the Comlink proxy's message-channel listener; without this the
+    // proxy keeps a reference to a port belonging to a terminated worker.
+    worker?.[Comlink.releaseProxy]?.();
+    set({ worker: null, rawWorker: null });
   },
 
   /**
@@ -134,23 +189,26 @@ export const useModelStore = create<ModelState>((set, get) => ({
   loadModel: async (modelId: ModelId) => {
     const { worker } = get();
     if (!worker) {
-      set({ status: 'error', error: 'Worker not initialized. Please refresh the page.' });
+      set({
+        status: "error",
+        error: "Worker not initialized. Please refresh the page.",
+      });
       return;
     }
 
-    set({ status: 'loading', loadProgress: 0, error: null });
+    set({ status: "loading", loadProgress: 0, error: null });
 
     try {
       await worker.loadModel(
         modelId,
         Comlink.proxy((progress: LoadProgress) => {
           set({ loadProgress: progress.progress ?? 0 });
-        })
+        }),
       );
-      set({ status: 'ready', modelId, loadProgress: 100 });
+      set({ status: "ready", modelId, loadProgress: 100 });
     } catch (err) {
-      console.error('Model loading failed:', err);
-      set({ status: 'error', error: String(err) });
+      console.error("Model loading failed:", err);
+      set({ status: "error", error: String(err) });
     }
   },
 
@@ -159,7 +217,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
    */
   tokenize: async (text: string) => {
     const { worker } = get();
-    if (!worker) throw new Error('Worker not initialized');
+    if (!worker) throw new Error("Worker not initialized");
 
     const result = await worker.tokenize(text);
     set({ tokens: result.tokens, tokenIds: result.tokenIds });
@@ -168,14 +226,14 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   generate: async (prompt: string) => {
     const { worker, status } = get();
-    if (!worker || status !== 'ready') {
-      throw new Error('Worker not initialized or model not ready');
+    if (!worker || status !== "ready") {
+      throw new Error("Worker not initialized or model not ready");
     }
 
     return await worker.generate(prompt, {
       maxNewTokens: 10,
       outputHiddenStates: true,
-      outputAttentions: true
+      outputAttentions: true,
     });
   },
 
@@ -183,6 +241,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
    * Reset error state to allow retry.
    */
   reset: () => {
-    set({ status: 'idle', error: null, loadProgress: 0 });
+    set({ status: "idle", error: null, loadProgress: 0 });
   },
 }));

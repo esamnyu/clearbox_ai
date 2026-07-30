@@ -1,0 +1,3 @@
+# Test-only dependencies. Runtime deps (numpy, scikit-learn, torch,
+# transformer_lens, fastapi, ...) live in requirements.txt.
+pytest>=8.0

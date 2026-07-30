@@ -1,0 +1,100 @@
+name: CI
+
+# The repo had no CI at all before this file: `npm run build` (tsc + vite) was
+# failing on main, and `npm run lint` had never run because no ESLint config
+# existed. Both are now gated here so neither can silently rot again.
+#
+# Note: vercel.json deliberately sets buildCommand to `vite build` (no tsc) so a
+# deploy is not blocked on a type error. That makes this workflow the *only*
+# place typecheck is enforced — do not remove the typecheck step.
+
+on:
+  push:
+    branches: [main, "proposal/**", "feature/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        # 12 warnings today, all `no-console` in worker.ts's load/generate
+        # logging. The cap is a ratchet: it fails if the count grows, so new
+        # console noise has to be deliberate.
+        run: npm run lint -- --max-warnings 12
+
+      - name: Unit tests
+        run: npm run test -- --run
+
+      - name: Production build
+        run: npx vite build
+
+  backend:
+    name: Backend (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 matches backend/Dockerfile (python:3.11-slim) — the version the
+        # HF Space actually runs. 3.12 is the forward-compat canary.
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch: the default wheel pulls ~2GB of CUDA runtime that
+          # no GitHub runner can use, and blows the disk quota on some images.
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.3.0
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Tests
+        working-directory: backend
+        # Model-loading tests stay gated off by default (see conftest.py /
+        # NEUROSCOPE_RUN_MODEL_TESTS): they pull multi-GB weights from HF and
+        # need a token for the gated Llama repos.
+        run: python -m pytest -q
+
+      - name: Import check (catches missing runtime deps before the Space does)
+        working-directory: backend
+        run: python -c "import main; print('FastAPI app imports OK')"
+
+  docker:
+    name: Backend image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the HF Spaces image
+        # Build only — no push. Catches Dockerfile/requirements drift, which is
+        # how the last two deploy attempts broke (see commit 5cd0175).
+        run: docker build -t neuroscope-api:ci ./backend

@@ -31,7 +31,7 @@
  * @module engine/worker
  */
 
-import * as Comlink from 'comlink';
+import * as Comlink from "comlink";
 // import { pipeline, env, type TextGenerationPipeline } from '@huggingface/transformers';
 import {
   env,
@@ -41,7 +41,7 @@ import {
   PreTrainedTokenizer,
   PreTrainedModel,
   Tensor,
-} from '@huggingface/transformers';
+} from "@huggingface/transformers";
 import type {
   ModelWorkerAPI,
   ModelId,
@@ -52,7 +52,7 @@ import type {
   GenerationResult,
   PipelineFactory,
   PipelineInterface,
-} from './types';
+} from "./types";
 
 // ============================================================================
 // TRANSFORMERS.JS CONFIGURATION
@@ -86,7 +86,11 @@ const defaultPipelineFactory: PipelineFactory = {
     if (config.progress_callback) {
       options.progress_callback = config.progress_callback;
     }
-    return await pipeline(task, modelId, options) as unknown as PipelineInterface;
+    return (await pipeline(
+      task,
+      modelId,
+      options,
+    )) as unknown as PipelineInterface;
   },
 };
 
@@ -109,7 +113,44 @@ function resetPipelineFactory(): void {
   currentPipelineFactory = defaultPipelineFactory;
 }
 
-// helper to clean up the double token problem in greedy decoding 
+/**
+ * Read the active factory.
+ *
+ * NOTE — the DI seam is currently vestigial: `loadModel` below constructs
+ * `GPT2LMHeadModel`/`AutoTokenizer` directly rather than going through the
+ * factory, so swapping the factory does not (yet) redirect model loading.
+ * The accessor exists so the seam is observable from tests and so the
+ * set/reset pair has a reader; wiring `loadModel` through it is a separate,
+ * behaviour-changing task.
+ * @internal
+ */
+function getPipelineFactory(): PipelineFactory {
+  return currentPipelineFactory;
+}
+
+/**
+ * Map a transformers.js progress status onto our narrower `LoadProgress`
+ * vocabulary. transformers emits 'initiate' | 'download' | 'progress' |
+ * 'done' | 'ready'; `LoadProgress` only models 'downloading' | 'loading' |
+ * 'ready'. The previous code cast the raw string straight across, which
+ * type-checked only because of the assertion and put values like 'initiate'
+ * into a field typed as never holding them.
+ */
+function toLoadStatus(status: string): LoadProgress["status"] {
+  switch (status) {
+    case "download":
+    case "downloading":
+    case "progress":
+      return "downloading";
+    case "ready":
+      return "ready";
+    default:
+      // 'initiate', 'done', and anything a future minor adds.
+      return "loading";
+  }
+}
+
+// helper to clean up the double token problem in greedy decoding
 function sampleToken(logits: Float32Array, temperature: number): number {
   // 1. Handle Temperature
   // If temp is very low, fall back to Greedy (Argmax) for stability
@@ -170,7 +211,7 @@ function sampleToken(logits: Float32Array, temperature: number): number {
 let tokenizer: PreTrainedTokenizer | null = null;
 let model: PreTrainedModel | null = null;
 let currentModelId: ModelId | null = null;
-let currentStatus: ModelStatus = 'idle';
+let currentStatus: ModelStatus = "idle";
 
 // ============================================================================
 // WORKER API IMPLEMENTATION
@@ -189,7 +230,7 @@ const workerAPI: ModelWorkerAPI = {
    */
   async loadModel(
     modelId: ModelId,
-    onProgress?: (progress: LoadProgress) => void
+    onProgress?: (progress: LoadProgress) => void,
   ): Promise<void> {
     if (model && currentModelId === modelId) {
       console.log(`Model ${modelId} already loaded`);
@@ -197,7 +238,7 @@ const workerAPI: ModelWorkerAPI = {
     }
 
     try {
-      currentStatus = 'loading';
+      currentStatus = "loading";
 
       console.log(`Loading raw model: ${modelId} (Full Precision)`);
 
@@ -207,28 +248,33 @@ const workerAPI: ModelWorkerAPI = {
       // load model (GPT2LMHeadModel)
       // we load the actual model class, not a pipeline wrapper
       model = await GPT2LMHeadModel.from_pretrained(modelId, {
-        dtype: 'fp32', // full precision for accurate gradients/analysis
-        device: 'wasm',
+        dtype: "fp32", // full precision for accurate gradients/analysis
+        device: "wasm",
         progress_callback: (progress) => {
           if (onProgress) {
+            // transformers.js v3 types ProgressInfo as a discriminated union:
+            // only the 'progress' variant carries progress/loaded/total, and
+            // 'ready' carries no file. Narrow with `in` rather than casting to
+            // any, so a future variant that drops a field fails the build here
+            // instead of silently emitting undefined bytes to the UI.
+            const hasBytes = "progress" in progress;
             onProgress({
-              status: progress.status as LoadProgress['status'],
-              file: progress.file,
-              progress: progress.progress,
-              loaded: progress.loaded,
-              total: progress.total,
-            })
+              status: toLoadStatus(progress.status),
+              file: "file" in progress ? progress.file : undefined,
+              progress: hasBytes ? progress.progress : undefined,
+              loaded: hasBytes ? progress.loaded : undefined,
+              total: hasBytes ? progress.total : undefined,
+            });
           }
-        }
-      })
+        },
+      });
 
       currentModelId = modelId;
-      currentStatus = 'ready';
+      currentStatus = "ready";
       console.log(`Model ${modelId} loaded for interpretability`);
-
     } catch (error) {
-      currentStatus = 'error';
-      console.error('Failed to load model:', error);
+      currentStatus = "error";
+      console.error("Failed to load model:", error);
       throw error;
     }
   },
@@ -244,8 +290,8 @@ const workerAPI: ModelWorkerAPI = {
     }
     tokenizer = null;
     currentModelId = null;
-    currentStatus = 'idle';
-    console.log('Model unloaded');
+    currentStatus = "idle";
+    console.log("Model unloaded");
   },
 
   /**
@@ -265,12 +311,11 @@ const workerAPI: ModelWorkerAPI = {
    * @returns Tokens, token IDs, and attention mask
    */
   async tokenize(text: string): Promise<TokenizationResult> {
-    if (!tokenizer) throw new Error('Model not loaded. Call LoadModel first');
-
+    if (!tokenizer) throw new Error("Model not loaded. Call LoadModel first");
 
     // Tokenize the input (tokensizer returns bigints in transformers v3)
     const encoded = await tokenizer(text, {
-      return_tensors: 'pt', 
+      return_tensors: "pt",
       padding: false,
       truncation: false,
     });
@@ -281,15 +326,19 @@ const workerAPI: ModelWorkerAPI = {
     // console.log('Token IDs:', tokenIds);
     // console.log('Raw Tensor Data:', tensorData);
     const inputIdsTensor = encoded.input_ids;
-    const tokenIds: number[] = Array.from(inputIdsTensor.data as BigInt64Array).map(Number);
+    const tokenIds: number[] = Array.from(
+      inputIdsTensor.data as BigInt64Array,
+    ).map(Number);
 
-    const tokens = tokenIds.map(id => tokenizer!.decode([id]));
-    console.log('Tokens:', tokens);
+    const tokens = tokenIds.map((id) => tokenizer!.decode([id]));
+    console.log("Tokens:", tokens);
 
     return {
       tokens,
       tokenIds,
-      attentionMask: Array.from(encoded.attention_mask.data as BigInt64Array).map(Number),
+      attentionMask: Array.from(
+        encoded.attention_mask.data as BigInt64Array,
+      ).map(Number),
     };
   },
 
@@ -304,78 +353,77 @@ const workerAPI: ModelWorkerAPI = {
    * Shape of hidden_states[layer]: [batch, seq_len, hidden_dim]
    * Shape of attentions[layer]: [batch, num_heads, seq_len, seq_len]
    */
-//   async generate(
-//     prompt: string,
-//     options: GenerateOptions = {}
-//   ): Promise<GenerationResult> {
-//     if (!model || !tokenizer) throw new Error('Model not loaded.');
+  //   async generate(
+  //     prompt: string,
+  //     options: GenerateOptions = {}
+  //   ): Promise<GenerationResult> {
+  //     if (!model || !tokenizer) throw new Error('Model not loaded.');
 
-//     const {
-//       maxNewTokens = 10,
-//       temperature = 1.0,
-//       outputHiddenStates = true,
-//       outputAttentions = true,
-//     } = options;
+  //     const {
+  //       maxNewTokens = 10,
+  //       temperature = 1.0,
+  //       outputHiddenStates = true,
+  //       outputAttentions = true,
+  //     } = options;
 
-//     const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
+  //     const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
 
-//     // running inference here...
-//     // We use return_dict_in_generate to get the full telemetry object
-//     const output = await model.generate({
-//       ...inputs,
-//       max_new_tokens: maxNewTokens,
-//       temperature,
-//       do_sample: temperature > 0,
-//       return_dict_in_generate: true, // this forces a return object instead of just tokens
-//       output_attentions: outputAttentions,
-//       output_hidden_states: outputHiddenStates,
-//     });
+  //     // running inference here...
+  //     // We use return_dict_in_generate to get the full telemetry object
+  //     const output = await model.generate({
+  //       ...inputs,
+  //       max_new_tokens: maxNewTokens,
+  //       temperature,
+  //       do_sample: temperature > 0,
+  //       return_dict_in_generate: true, // this forces a return object instead of just tokens
+  //       output_attentions: outputAttentions,
+  //       output_hidden_states: outputHiddenStates,
+  //     });
 
-//     const generatedIds = output.sequences; // unsure that sequences is present in ModelOutput
-//     const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
-//     console.log('generatedText:', generatedText);
+  //     const generatedIds = output.sequences; // unsure that sequences is present in ModelOutput
+  //     const generatedText = tokenizer.decode(generatedIds[0], { skip_special_tokens: true });
+  //     console.log('generatedText:', generatedText);
 
-//     // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
-//     // NOTE: this extracts data for the generated tokens.
-//     // Structure: output.attentions[token_index][layer_index] -> Tensor
+  //     // IMPORTANT: rudimentary telemetry extraction (will need to adapt this for future analysis)
+  //     // NOTE: this extracts data for the generated tokens.
+  //     // Structure: output.attentions[token_index][layer_index] -> Tensor
 
-//     let extractedAttentions: any = null;
-//     let extractedHiddenStates: any = null;
+  //     let extractedAttentions: any = null;
+  //     let extractedHiddenStates: any = null;
 
-//     console.log('[Worker] Extracting internal model states for analysis');
-//     console.log('Full output class:', output);
-//     console.log('Output keys:', Object.keys(output));
-//     console.log('Attentions:', output.attentions);
-//     console.log('Hidden States:', output.hidden_states);
+  //     console.log('[Worker] Extracting internal model states for analysis');
+  //     console.log('Full output class:', output);
+  //     console.log('Output keys:', Object.keys(output));
+  //     console.log('Attentions:', output.attentions);
+  //     console.log('Hidden States:', output.hidden_states);
 
+  //     if (outputAttentions && output.attentions) {
+  //       // example extraction logic: extract attention from the last generated token, last layer
+  //       // in the real app, we would flatten and transfer these buffers
+  //       console.log(`[Worker] Captured ${output.attentions.length} steps of attention`);
+  //       extractedAttentions = {
+  //         layers: output.attentions[0].length,
+  //         steps: output.attentions.length,
+  //         // add more extraction logic here
+  //         info: "Raw tensors held in worker memory - see console logs"
+  //       };
+  //     }
 
-//     if (outputAttentions && output.attentions) {
-//       // example extraction logic: extract attention from the last generated token, last layer
-//       // in the real app, we would flatten and transfer these buffers
-//       console.log(`[Worker] Captured ${output.attentions.length} steps of attention`);
-//       extractedAttentions = {
-//         layers: output.attentions[0].length,
-//         steps: output.attentions.length,
-//         // add more extraction logic here
-//         info: "Raw tensors held in worker memory - see console logs"
-//       };
-//     }
-    
-//     return {
-//       text: generatedText,
-//       tokens: [], 
-//       tokenIds: Array.from(generatedIds[0].data as BigInt64Array).map(Number),
-//       attentions: extractedAttentions,
-//       hiddenStates: extractedHiddenStates, // placeholder
-//     };
-//   },
-// };
+  //     return {
+  //       text: generatedText,
+  //       tokens: [],
+  //       tokenIds: Array.from(generatedIds[0].data as BigInt64Array).map(Number),
+  //       attentions: extractedAttentions,
+  //       hiddenStates: extractedHiddenStates, // placeholder
+  //     };
+  //   },
+  // };
 
   async generate(
     prompt: string,
-    options: GenerateOptions = {}  
+    options: GenerateOptions = {},
   ): Promise<GenerationResult> {
-    if (!model || !tokenizer) throw new Error('Model not loaded.');
+    if (!model || !tokenizer) throw new Error("Model not loaded.");
 
     const {
       maxNewTokens = 10,
@@ -385,50 +433,68 @@ const workerAPI: ModelWorkerAPI = {
     } = options;
 
     // Tokenize input
-    const inputs = await tokenizer(prompt, { return_tensors: 'pt' });
+    const inputs = await tokenizer(prompt, { return_tensors: "pt" });
 
     // let currentTokenIds = inputs.input_ids; // Tensor of shape [1, seq_len]
     // Convert BigInt64Array to standard arrays for easy manipulation in the loop
-    let currentInputIds = Array.from(inputs.input_ids.data as BigInt64Array).map(Number);
-    let currentAttentionMask = Array.from(inputs.attention_mask.data as BigInt64Array).map(Number);
+    const currentInputIds = Array.from(
+      inputs.input_ids.data as BigInt64Array,
+    ).map(Number);
+    const currentAttentionMask = Array.from(
+      inputs.attention_mask.data as BigInt64Array,
+    ).map(Number);
 
     // telemetry storage - these will hold the actual tensor data for analysis
-    const collectedAttentions: { data: Float32Array; shape: number[]; dtype: 'float32'; step: number; layer: number }[] = [];
-    const collectedHiddenStates: { data: Float32Array; shape: number[]; dtype: 'float32'; step: number; layer: number }[] = [];
+    const collectedAttentions: {
+      data: Float32Array;
+      shape: number[];
+      dtype: "float32";
+      step: number;
+      layer: number;
+    }[] = [];
+    const collectedHiddenStates: {
+      data: Float32Array;
+      shape: number[];
+      dtype: "float32";
+      step: number;
+      layer: number;
+    }[] = [];
     const newTokens: number[] = [];
 
-    console.log('[Worker] Starting Manual Autoregressive Loop...');
+    console.log("[Worker] Starting Manual Autoregressive Loop...");
 
     for (let i = 0; i < maxNewTokens; i++) {
       // Forward pass
       // We will specifically request telemetry for this specific pass
       // Re-create Tensors for this step (Transformers.js expects BigInt64Array for 'int64')
       const inputTensor = new Tensor(
-        'int64',
+        "int64",
         BigInt64Array.from(currentInputIds.map(BigInt)),
-        [1, currentInputIds.length]
+        [1, currentInputIds.length],
       );
 
       const maskTensor = new Tensor(
-        'int64',
+        "int64",
         BigInt64Array.from(currentAttentionMask.map(BigInt)),
-        [1, currentAttentionMask.length]
+        [1, currentAttentionMask.length],
       );
 
+      const output = await model(
+        {
+          input_ids: inputTensor,
+          attention_mask: maskTensor,
+        },
+        {
+          output_attentions: outputAttentions,
+          output_hidden_states: outputHiddenStates,
+          return_dict: true,
+        },
+      );
 
-      const output = await model({
-        input_ids: inputTensor,
-        attention_mask: maskTensor,
-      }, {
-        output_attentions: outputAttentions,
-        output_hidden_states: outputHiddenStates,
-        return_dict: true,
-      });
-
-      console.log('[DEBUG] Current attention mask:', currentAttentionMask);
-      console.log('[DEBUG] Output attentions:', output.attentions);
-      console.log('[DEBUG] Output hidden states:', output.hidden_states);
-      console.log('[DEBUG] Output logits:', output.logits);
+      console.log("[DEBUG] Current attention mask:", currentAttentionMask);
+      console.log("[DEBUG] Output attentions:", output.attentions);
+      console.log("[DEBUG] Output hidden states:", output.hidden_states);
+      console.log("[DEBUG] Output logits:", output.logits);
 
       // extraction - pulling actual tensor data, not just metadata
       // output.attentions is array of tensors: [layer_0, layer_1, ..., layer_11]
@@ -440,9 +506,9 @@ const workerAPI: ModelWorkerAPI = {
           collectedAttentions.push({
             data: new Float32Array(tensor.data as Float32Array),
             shape: tensor.dims,
-            dtype: 'float32' as const,
+            dtype: "float32" as const,
             step: i,
-            layer
+            layer,
           });
         }
       }
@@ -455,9 +521,9 @@ const workerAPI: ModelWorkerAPI = {
           collectedHiddenStates.push({
             data: new Float32Array(tensor.data as Float32Array),
             shape: tensor.dims,
-            dtype: 'float32' as const,
+            dtype: "float32" as const,
             step: i,
-            layer
+            layer,
           });
         }
       }
@@ -467,14 +533,15 @@ const workerAPI: ModelWorkerAPI = {
       const logits = output.logits;
 
       // grabbing logits for the last toke, need to handle the tensor data manually
-      const [batchSize, seqLen, vocabSize] = logits.dims;
+      // batch dim is always 1 here (single-prompt worker), so it's skipped.
+      const [, seqLen, vocabSize] = logits.dims;
       const data = logits.data as Float32Array; // assuming fp32
 
       // calc offset for last token vocab distribution
       const lastIdx = (seqLen - 1) * vocabSize;
       const lastLogits = data.slice(lastIdx, lastIdx + vocabSize);
 
-     // using sample helper here to handle temperature and sampling
+      // using sample helper here to handle temperature and sampling
       const nextTokenId = sampleToken(lastLogits, temperature);
 
       // update for next iteration
@@ -486,22 +553,35 @@ const workerAPI: ModelWorkerAPI = {
       currentInputIds.push(nextTokenId);
       currentAttentionMask.push(1); // assume all tokens are valid
 
-      console.log(`[Worker] Generated token ${i + 1}/${maxNewTokens}: ID ${nextTokenId}`);
+      console.log(
+        `[Worker] Generated token ${i + 1}/${maxNewTokens}: ID ${nextTokenId}`,
+      );
       // Optional: Early stop on EOS token (50256 for GPT-2)
       if (nextTokenId === 50256) break;
     }
 
     // Decode generated token IDs to text
-    const generatedText = tokenizer.decode(newTokens, { skip_special_tokens: true });
-    console.log(`[Worker] Loop finished. Captured ${collectedAttentions.length} attention steps.`);
+    const generatedText = tokenizer.decode(newTokens, {
+      skip_special_tokens: true,
+    });
+    console.log(
+      `[Worker] Loop finished. Captured ${collectedAttentions.length} attention steps.`,
+    );
+
+    // Decode each token ID individually so visualizations have labels
+    // currentInputIds contains the full context: prompt tokens + generated tokens
+    const allTokens = currentInputIds.map((id) =>
+      tokenizer!.decode([id], { skip_special_tokens: false }),
+    );
 
     return {
-      text: generatedText, // this will be just the NEW text
-      tokens: [],
-      tokenIds: newTokens,
-      // now returning actual tensor arrays instead of wrapped metadata
-      attentions: collectedAttentions.length > 0 ? collectedAttentions : undefined,
-      hiddenStates: collectedHiddenStates.length > 0 ? collectedHiddenStates : undefined,
+      text: generatedText,
+      tokens: allTokens,
+      tokenIds: currentInputIds,
+      attentions:
+        collectedAttentions.length > 0 ? collectedAttentions : undefined,
+      hiddenStates:
+        collectedHiddenStates.length > 0 ? collectedHiddenStates : undefined,
     };
   },
 };
@@ -513,6 +593,7 @@ const workerAPI: ModelWorkerAPI = {
 const testAPI = {
   _setPipelineFactory: setPipelineFactory,
   _resetPipelineFactory: resetPipelineFactory,
+  _getPipelineFactory: getPipelineFactory,
 };
 
 // Expose the API via Comlink (includes test utilities)

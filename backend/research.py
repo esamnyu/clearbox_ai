@@ -8,12 +8,62 @@ The research questions and analysis logic are Moon's - we just swapped
 the plumbing from raw HuggingFace to TransformerLens.
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import Callable, List, Dict, Any, Tuple
 import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
 
-from model import get_model, run_with_cache
+from model import get_model, get_model_name, run_with_cache
+
+
+# -----------------------------------------------------------------------------
+# Chat template helper
+# -----------------------------------------------------------------------------
+# Llama-3.2-*-Instruct expects prompts wrapped in special chat tokens
+# (<|begin_of_text|>, <|start_header_id|>user<|end_header_id|>, ...).
+# Refusal behavior in particular only fires inside that envelope — raw
+# prompts will not produce realistic refusals. Base models like gpt2-small
+# have no chat template, so we no-op there.
+
+def apply_chat_template(prompt: str) -> str:
+    """
+    Wrap `prompt` in the loaded model's chat template if it's instruct-tuned.
+
+    Detection is name-based ("Instruct" / "instruct" in the model name).
+    For non-instruct models the prompt is returned unchanged, so existing
+    GPT-2 behavior is preserved.
+
+    Call this from generation paths (steering, refusal-direction ablation)
+    and from contrastive-vector extraction on instruct models. Do NOT call
+    it from logit_lens / attention / gradients — those probe raw
+    representations and should see the prompt as-is.
+    """
+    name = get_model_name() or ""
+    if "instruct" not in name.lower():
+        return prompt
+    tokenizer = get_model().tokenizer
+    return tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Shared ablation hook
+# -----------------------------------------------------------------------------
+# Used by `ablate_along_direction` (UI side-by-side generation) and by
+# refusal_bench.harmfulness_probe.extract_with_ablation (probe scoring).
+# Single source of truth for h' = h - (h · d̂) d̂.
+
+def make_ablation_hook(unit_direction: torch.Tensor) -> Callable:
+    """Build a TransformerLens fwd hook that removes the projection along d̂."""
+    def ablation_hook(activation, hook):
+        # activation: [batch, seq_len, d_model]
+        coeffs = (activation * unit_direction).sum(dim=-1, keepdim=True)
+        activation[:, :, :] = activation - coeffs * unit_direction
+        return activation
+    return ablation_hook
 
 
 # -----------------------------------------------------------------------------
@@ -334,4 +384,146 @@ def compute_pca_trajectories(prompt: str) -> Dict[str, Any]:
         "tokens": tokens,
         "variance_explained": [round(v, 4) for v in pca.explained_variance_ratio_],
         "trajectories": results,
+    }
+
+
+# -----------------------------------------------------------------------------
+# Steered Generation
+# -----------------------------------------------------------------------------
+
+def generate_steered(
+    prompt: str,
+    steering_vector: List[float],
+    alpha: float,
+    layer: int,
+    max_new_tokens: int = 30,
+    seed: int = 42,
+    do_sample: bool = False,
+    temperature: float = 0.7,
+) -> Dict[str, Any]:
+    """
+    Generate text with a steering vector injected at the specified layer.
+
+    The steering vector is added to the residual stream during the forward pass:
+      h_steered = h_original + alpha * v_steering
+
+    Positive alpha steers toward the positive direction (e.g., positive sentiment).
+    Negative alpha steers toward the negative direction.
+
+    Determinism: the steered and baseline generations must differ ONLY by the
+    intervention, not by sampling noise. We default to greedy decoding
+    (do_sample=False) so the comparison is exactly controlled. If sampling is
+    requested, we reseed torch before BOTH calls so they draw the same samples
+    and any divergence is still attributable to the steering vector.
+    """
+    model = get_model()
+
+    # Llama-Instruct needs the chat-template envelope to behave realistically.
+    formatted = apply_chat_template(prompt)
+    tokens = model.to_tokens(formatted)
+
+    steering_tensor = torch.tensor(steering_vector, dtype=torch.float32, device=model.cfg.device)
+
+    def steering_hook(activation, hook):
+        # activation shape: [batch, seq_len, d_model]
+        # Add the steering vector (scaled by alpha) to all token positions
+        activation[:, :, :] = activation[:, :, :] + alpha * steering_tensor
+        return activation
+
+    # Generate with the hook active at the specified layer
+    hook_name = f"blocks.{layer}.hook_resid_post"
+
+    def _generate():
+        if do_sample:
+            torch.manual_seed(seed)
+        return model.generate(
+            tokens,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            do_sample=do_sample,
+        )
+
+    with model.hooks(fwd_hooks=[(hook_name, steering_hook)]):
+        steered_output = _generate()
+
+    # Baseline (no steering) under the same decoding regime for a fair contrast.
+    baseline_output = _generate()
+
+    return {
+        "prompt": prompt,
+        "layer": layer,
+        "alpha": alpha,
+        "steered_text": model.to_string(steered_output[0]),
+        "baseline_text": model.to_string(baseline_output[0]),
+    }
+
+
+# -----------------------------------------------------------------------------
+# Direction Ablation (Projection Removal)
+# -----------------------------------------------------------------------------
+# The causal counterpart to steering: instead of ADDING a vector, REMOVE the
+# component of the residual stream that lies along the direction. This is the
+# standard primitive for testing causal claims of the form "direction d
+# mediates behavior X" (Arditi et al., 2024 — refusal direction).
+
+def ablate_along_direction(
+    prompt: str,
+    direction: List[float],
+    layer: int,
+    max_new_tokens: int = 30,
+    seed: int = 42,
+    do_sample: bool = False,
+    temperature: float = 0.7,
+) -> Dict[str, Any]:
+    """
+    Generate text with the projection along `direction` removed at `layer`.
+
+    Hook math: h' = h - (h · d̂) d̂   where d̂ = direction / ||direction||
+
+    Zeros the residual stream's component along d̂ at every token position of
+    the chosen layer. Contrast with generate_steered, which adds alpha * v.
+
+    Returns both ablated and baseline generations so the caller can show a
+    side-by-side. Decoding is greedy by default so the ablated vs. baseline
+    pair differs ONLY by the intervention; if sampling is requested we reseed
+    before both calls so they share the same draws.
+    """
+    model = get_model()
+
+    direction_tensor = torch.tensor(
+        direction, dtype=torch.float32, device=model.cfg.device
+    )
+    norm = direction_tensor.norm()
+    if norm.item() < 1e-8:
+        raise RuntimeError("direction has near-zero norm; cannot ablate")
+    unit_direction = direction_tensor / norm
+
+    # Llama-Instruct needs the chat-template envelope to behave realistically.
+    formatted = apply_chat_template(prompt)
+    tokens = model.to_tokens(formatted)
+
+    ablation_hook = make_ablation_hook(unit_direction)
+    hook_name = f"blocks.{layer}.hook_resid_post"
+
+    def _generate():
+        if do_sample:
+            torch.manual_seed(seed)
+        return model.generate(
+            tokens,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            do_sample=do_sample,
+        )
+
+    with model.hooks(fwd_hooks=[(hook_name, ablation_hook)]):
+        ablated_output = _generate()
+
+    baseline_output = _generate()
+
+    return {
+        "prompt": prompt,
+        "layer": layer,
+        "direction_norm_before": round(float(norm.item()), 4),
+        "ablated_text": model.to_string(ablated_output[0]),
+        "baseline_text": model.to_string(baseline_output[0]),
     }
