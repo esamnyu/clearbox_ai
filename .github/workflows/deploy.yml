@@ -1,0 +1,116 @@
+name: Deploy
+
+# Continuous deploy of the frontend to https://neuroscope-interp.netlify.app
+#
+# Why this exists rather than Netlify's own git integration: linking the repo
+# through Netlify's GitHub App needs a one-time interactive OAuth authorization.
+# Until that is done, this workflow does the same job — build, then push the
+# artifact straight to Netlify's deploy API.
+#
+# Trigger is `workflow_run` on CI rather than `push`, so a commit that fails
+# typecheck, lint, tests or the backend build can never reach production. It is
+# deliberately NOT triggered by `pull_request`: that would expose
+# NETLIFY_AUTH_TOKEN to any fork that opens a PR.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Never cancel a deploy midway — a half-uploaded bundle would be served.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy to Netlify
+    # workflow_dispatch has no workflow_run context, so allow it through.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://neuroscope-interp.netlify.app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deploy exactly the commit CI approved, not whatever main points at
+          # now — they differ whenever commits land while CI is running.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          # Baked into the client bundle at build time. Public by design — this
+          # is the HuggingFace Space that serves the TransformerLens analyses.
+          VITE_API_BASE: https://lymnal-neuroscope-api.hf.space
+        run: npx vite build
+
+      - name: Package
+        # For a direct (non-git-linked) deploy Netlify reads configuration from
+        # the root of the uploaded files, so netlify.toml has to travel inside
+        # the zip. Without it the COOP/COEP headers are lost and transformers.js
+        # silently drops to the single-threaded WASM runtime.
+        run: |
+          cp netlify.toml dist/netlify.toml
+          cd dist && zip -qr ../site.zip .
+
+      - name: Deploy
+        id: deploy
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          id=$(curl -sS --fail-with-body --max-time 300 -X POST \
+            "https://api.netlify.com/api/v1/sites/${NETLIFY_SITE_ID}/deploys" \
+            -H "Authorization: Bearer ${NETLIFY_AUTH_TOKEN}" \
+            -H "Content-Type: application/zip" \
+            --data-binary @site.zip | jq -r .id)
+          [ -n "$id" ] && [ "$id" != "null" ] || { echo "::error::no deploy id returned"; exit 1; }
+          echo "deploy_id=$id" >> "$GITHUB_OUTPUT"
+          echo "Deploy $id created"
+
+      - name: Wait for it to go live
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            state=$(curl -sS --max-time 30 \
+              -H "Authorization: Bearer ${NETLIFY_AUTH_TOKEN}" \
+              "https://api.netlify.com/api/v1/deploys/${{ steps.deploy.outputs.deploy_id }}" | jq -r .state)
+            echo "  [$i] $state"
+            case "$state" in
+              ready)  exit 0 ;;
+              error)  echo "::error::Netlify reported a failed deploy"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::deploy did not reach 'ready' within 5 minutes"; exit 1
+
+      - name: Verify what actually shipped
+        # A 200 alone is not proof. If the isolation headers go missing the app
+        # still loads and just gets quietly slower, which is the failure mode
+        # most likely to go unnoticed — so assert on them directly.
+        run: |
+          set -euo pipefail
+          url=https://neuroscope-interp.netlify.app
+          code=$(curl -s -o /dev/null -w '%{http_code}' -L --max-time 30 "$url")
+          [ "$code" = "200" ] || { echo "::error::page returned $code"; exit 1; }
+          headers=$(curl -sI --max-time 30 "$url")
+          grep -qi 'cross-origin-opener-policy: same-origin'     <<<"$headers" \
+            || { echo "::error::COOP header missing"; exit 1; }
+          grep -qi 'cross-origin-embedder-policy: require-corp'  <<<"$headers" \
+            || { echo "::error::COEP header missing"; exit 1; }
+          echo "Live, 200, cross-origin isolated."
