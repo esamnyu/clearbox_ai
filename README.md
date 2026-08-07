@@ -5,6 +5,8 @@
 > along a direction you derived yourself, and compare six published
 > refusal-ablation techniques on the same evidence.
 
+**[Open the workbench →](https://neuroscope-interp.netlify.app)**  ·  backend: [`lymnal/neuroscope-api`](https://huggingface.co/spaces/lymnal/neuroscope-api)
+
 ![NeuroScope](docs/assets/hero.png)
 
 The model runs in your tab via WebGPU. Nothing you type is uploaded; the Python
