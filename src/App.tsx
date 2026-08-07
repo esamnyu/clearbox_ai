@@ -8,6 +8,7 @@ import TokenImportance from "./components/TokenImportance";
 import SteeringPanel from "./components/SteeringPanel";
 import RefusalBenchLeaderboard from "./components/RefusalBenchLeaderboard";
 import WelcomeDeck from "./components/WelcomeDeck";
+import SectionNav, { type NavSection } from "./components/SectionNav";
 import DefinedTerm from "./components/DefinedTerm";
 import TryThis from "./components/TryThis";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -135,6 +136,62 @@ export default function App() {
 
   const stats = computeTelemetryStats(telemetry);
 
+  // Prerequisites, stated once and reused by both the nav and the section
+  // headers so the two can't drift apart.
+  //
+  // The split that matters to a first-time reader: only I–III need the 500 MB
+  // browser model. IV–VI run on the backend, and VII reads a cached artifact,
+  // so four of the seven sections are usable before downloading anything.
+  const modelReady = status === "ready";
+  const hasRun = telemetry !== null;
+  const backendReady = backendStatus === "connected";
+
+  const needsModel = modelReady ? undefined : "load GPT-2 — the button above";
+  const needsRun = hasRun ? undefined : "press generate in §I";
+  const needsBackend = backendReady
+    ? undefined
+    : "the analysis backend to wake up";
+
+  const navSections: NavSection[] = [
+    { id: "sec-prompt", number: "I", label: "Prompt", blockedBy: needsModel },
+    {
+      id: "sec-generation",
+      number: "II",
+      label: "Generation",
+      blockedBy: needsRun,
+    },
+    {
+      id: "sec-attention",
+      number: "III",
+      label: "Attention",
+      blockedBy: needsRun,
+    },
+    {
+      id: "sec-logit-lens",
+      number: "IV",
+      label: "Layer Predictions",
+      blockedBy: needsBackend,
+    },
+    {
+      id: "sec-gradients",
+      number: "V",
+      label: "Token Importance",
+      blockedBy: needsBackend,
+    },
+    {
+      id: "sec-steering",
+      number: "VI",
+      label: "Intervention",
+      blockedBy: needsBackend,
+    },
+    {
+      id: "sec-bench",
+      number: "VII",
+      label: "Refusal Bench",
+      blockedBy: undefined,
+    },
+  ];
+
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-ink font-serif text-graphite">
       <div className="atmosphere" />
@@ -147,6 +204,8 @@ export default function App() {
         />
 
         <WelcomeDeck />
+
+        <SectionNav sections={navSections} />
 
         <LoadGate
           modelStatus={status}
@@ -166,8 +225,10 @@ export default function App() {
         )}
 
         <Section
+          id="sec-prompt"
           number="I"
           title="Prompt"
+          blockedBy={needsModel}
           tryThis={{
             hint: "type 'The Eiffel Tower is located in' and press generate",
             outcome:
@@ -192,8 +253,10 @@ export default function App() {
             first-time visitor read I, III, IV, V… and reasonably concluded a
             section had failed to load. It now shows its own empty state. */}
         <Section
+          id="sec-generation"
           number="II"
           title="Generation"
+          blockedBy={needsRun}
           tryThis={{
             hint: "compare what came out with the telemetry on the right",
             outcome:
@@ -204,7 +267,9 @@ export default function App() {
         </Section>
 
         <Section
+          id="sec-attention"
           number="III"
+          blockedBy={needsRun}
           title={
             <DefinedTerm
               definition="How each token in your prompt 'looks at' the others to decide what to write next. A GPT-2 model has 12 layers × 12 heads = 144 of these patterns running in parallel; some specialise in copying, some in tracking position, some are full induction circuits."
@@ -227,7 +292,9 @@ export default function App() {
         </Section>
 
         <Section
+          id="sec-logit-lens"
           number="IV"
+          blockedBy={needsBackend}
           title={
             <DefinedTerm
               definition="What the model would predict next if you halted it at each layer. The trick: multiply the residual stream at layer L by the unembedding matrix, see what tokens come out top. Early layers usually say 'the'; later layers converge on the actual answer."
@@ -247,7 +314,9 @@ export default function App() {
         </Section>
 
         <Section
+          id="sec-gradients"
           number="V"
+          blockedBy={needsBackend}
           title={
             <DefinedTerm
               definition="Which tokens in your prompt most influence a target prediction. Computed from the gradient of the target's log-probability with respect to each token's embedding. High-gradient tokens are the levers a clever attack would pull."
@@ -267,8 +336,10 @@ export default function App() {
         </Section>
 
         <Section
+          id="sec-steering"
           number="VI"
           title="Intervention"
+          blockedBy={needsBackend}
           tryThis={{
             hint: "compute a steering vector, then slide α from −3 to +3 and watch generation tilt",
             outcome:
@@ -279,6 +350,7 @@ export default function App() {
         </Section>
 
         <Section
+          id="sec-bench"
           number="VII"
           title={
             <DefinedTerm
@@ -430,6 +502,26 @@ function LoadGate({
               Usually 30&nbsp;s–2&nbsp;min. Nothing you type is sent anywhere:
               inference runs on your own hardware via WebGPU.
             </p>
+            {/* The download gates §I–III only. Without saying so, a first-time
+                reader meets a 500 MB wall in front of a page whose headline
+                result needs no download at all — and some of them leave. */}
+            <p className="mt-3 font-serif text-sm leading-relaxed text-slate-500">
+              Not now?{" "}
+              <a
+                href="#sec-logit-lens"
+                className="text-slate-400 underline decoration-slate-700 underline-offset-4 hover:text-vermillion-light"
+              >
+                §IV–VI
+              </a>{" "}
+              run on the analysis backend instead, and{" "}
+              <a
+                href="#sec-bench"
+                className="text-slate-400 underline decoration-slate-700 underline-offset-4 hover:text-vermillion-light"
+              >
+                §VII — the refusal bench
+              </a>{" "}
+              is already on this page. The download only gates §I–III.
+            </p>
           </div>
           <button
             type="button"
@@ -522,19 +614,31 @@ function StatusInline({
 // ──────────────────────────────────────────────────────────────
 
 function Section({
+  id,
   number,
   title,
   tryThis,
+  blockedBy,
   children,
 }: {
+  id: string;
   number: string;
   title: ReactNode;
   /** Optional editor-whisper line under the title — see TryThis component. */
   tryThis?: { hint: string; outcome?: string };
+  /**
+   * What the reader has to do before this section can produce anything. Shown
+   * as a prerequisite line under the title. Previously each panel just rendered
+   * its own empty state ("run inference to capture activations"), which says
+   * what is missing but not how to get it.
+   */
+  blockedBy?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="mb-20">
+    // scroll-mt clears the sticky nav so a jumped-to heading isn't hidden
+    // underneath it.
+    <section id={id} className="mb-20 scroll-mt-20">
       <header
         className={
           tryThis
@@ -554,8 +658,13 @@ function Section({
         <TryThis
           hint={tryThis.hint}
           outcome={tryThis.outcome}
-          className="mb-8 ml-9"
+          className={blockedBy ? "mb-2 ml-9" : "mb-8 ml-9"}
         />
+      ) : null}
+      {blockedBy ? (
+        <p className="mb-8 ml-9 font-mono text-xs uppercase tracking-[0.18em] text-slate-600">
+          <span className="text-slate-500">needs first ·</span> {blockedBy}
+        </p>
       ) : null}
       {/* Per-section rather than per-app: a throw in the attention heatmap
           should not take the bench table down with it. */}
