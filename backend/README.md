@@ -25,6 +25,7 @@ Exposes activation-extraction endpoints (logit lens, attention patterns, gradien
 | `POST /steering-vector` | Difference-of-means vector from contrastive prompts |
 | `POST /generate-steered` | Generation with a steering vector injected at a layer |
 | `POST /ablate-direction` | Generation with a direction projected out of the residual stream (`h' = h − (h·d̂)d̂`) |
+| `POST /patch` | Activation-patching sweep over (layer × position) or (layer × head); denoising = sufficiency, noising = necessity |
 | `POST /harmfulness-probe` | Train a Zhao-style linear harmfulness probe on residuals at a layer; optionally re-evaluate it under ablation |
 | `POST /refusal-bench` | Run the Refusal Bench end-to-end: one row per requested technique, scored by refusal rate + probe AUC (optional `over_refusal_prompts` for techniques that need an over-refusal split, e.g. Maskey) |
 | `GET /refusal-bench/techniques` | List the registered refusal-ablation techniques |

@@ -50,6 +50,7 @@ leaves 5 eval prompts and 10 AUC points, so every interval is wide.
   Read the numbers with their intervals: the run uses 20 pairs per class, which leaves 5 eval prompts and 10 AUC points, and the bootstrap CIs on post-ablation AUC are correspondingly wide. Zero techniques met the preregistered dissociation criterion. `docs/BLOG_POST_DRAFT.md` has the full table and the caveats.
 - **Statistical honesty layer**: Wilson 95% CIs on refusal rates (`wilson_ci`), percentile-bootstrap 95% CIs on probe AUC (`bootstrap_auc_ci`), and a one-sided permutation test that post-ablation AUC beats chance (`auc_permutation_p`) — seeded and deterministic, unit-tested in `backend/tests/test_stats.py`, rendered as ± bands in the leaderboard UI.
 - **Ablation primitive**: projection-removal hook (`h − (h · d̂)d̂`) exposed at `POST /ablate-direction` with a `SteeringPanel` UI for interactive before/after generation.
+- **Activation patching**: single-site causal localization at `POST /patch` — denoising and noising sweeps over (layer × position) or (layer × head), with logit-diff recovery normalized so 0 = base run, 1 = source run. Reproduces the textbook IOI localization on GPT-2-small (recovery at the final position jumps 0.00 → 0.22 → 0.87 → 1.00 across layers 6–9).
 
 ## Research context
 

@@ -10,12 +10,13 @@ API docs: http://localhost:8000/docs
 """
 
 import os
-from typing import List, Optional
+from typing import List, Literal, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import model
+import patching
 import research
 import refusal_pairs as refusal_pairs_module
 from refusal_bench.harmfulness_probe import (
@@ -115,6 +116,35 @@ class AblationRequest(BaseModel):
     )
 
 
+class PatchRequest(BaseModel):
+    """
+    Activation-patching sweep between a clean/corrupted prompt pair.
+
+    The prompts must tokenize to the same length. Answers must be single
+    tokens (for GPT-2 that usually means a leading space, e.g. " Mary").
+    Each grid cell costs one full forward pass, so sweeps are capped at
+    MAX_PATCH_RUNS cells — restrict layers/positions/heads to stay under it.
+    """
+    clean_prompt: str
+    corrupted_prompt: str
+    clean_answer: str = Field(..., description="Single-token answer the clean prompt favors")
+    corrupted_answer: str = Field(..., description="Single-token answer the corrupted prompt favors")
+    direction: Literal["denoising", "noising"] = Field(
+        default="denoising",
+        description="denoising = clean acts into corrupted run (sufficiency); "
+        "noising = corrupted acts into clean run (necessity)",
+    )
+    component: Literal["resid_post", "head_z"] = Field(
+        default="resid_post",
+        description="resid_post sweeps layer x position; head_z sweeps layer x head",
+    )
+    layers: Optional[List[int]] = Field(default=None, description="Default: all layers")
+    positions: Optional[List[int]] = Field(
+        default=None, description="resid_post only; negatives index from the end. Default: all"
+    )
+    heads: Optional[List[int]] = Field(default=None, description="head_z only. Default: all heads")
+
+
 class RefusalBenchRequest(BaseModel):
     """
     Run the Refusal Bench: a head-to-head comparison of refusal-ablation
@@ -196,6 +226,10 @@ ALLOWED_MODELS = {
 }
 MAX_PROMPT_CHARS = 2000
 MAX_BENCH_PROMPTS = 200
+# Each activation-patching cell is a full forward pass; 256 covers a complete
+# 12x12 GPT-2 head grid or a 12-layer x 21-position resid grid, while keeping
+# the worst-case request bounded on the free CPU tier.
+MAX_PATCH_RUNS = 256
 
 
 def _validate_model_name(name: str) -> None:
@@ -356,6 +390,40 @@ async def ablate_direction(req: AblationRequest):
             do_sample=req.do_sample,
         )
     except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/patch")
+async def activation_patch(req: PatchRequest):
+    """
+    Activation-patching sweep over (layer x position) or (layer x head).
+
+    Runs the model on the base prompt while splicing in the source prompt's
+    cached activation at one site per cell, measuring logit_diff(clean_answer
+    - corrupted_answer) at the final position. `normalized` is 0 at the base
+    run's own value and 1 at the source run's: in denoising that means full
+    restoration (sufficiency), in noising full destruction (necessity). The
+    two directions answer different questions and can disagree — neither
+    alone identifies "the circuit".
+    """
+    try:
+        _validate_prompt(req.clean_prompt)
+        _validate_prompt(req.corrupted_prompt)
+        for layer in req.layers or []:
+            _validate_layer(layer)
+        return patching.run_activation_patching(
+            req.clean_prompt,
+            req.corrupted_prompt,
+            req.clean_answer,
+            req.corrupted_answer,
+            direction=req.direction,
+            component=req.component,
+            layers=req.layers,
+            positions=req.positions,
+            heads=req.heads,
+            max_runs=MAX_PATCH_RUNS,
+        )
+    except (RuntimeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 

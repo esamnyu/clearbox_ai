@@ -26,6 +26,7 @@ from typing import Iterator, Tuple
 
 import pytest
 
+import patching
 import research
 from refusal_bench.techniques import TECHNIQUES
 
@@ -116,6 +117,21 @@ def test_research_module_hook_closures_accept_hook_keyword():
         args = [a.arg for a in fn.args.args]
         assert args[1:2] == [HOOK_KWARG], (
             f"research.{factory_name}.{fn.name} takes {args}; "
+            f"second parameter must be {HOOK_KWARG!r}"
+        )
+
+
+def test_patching_module_hook_closures_accept_hook_keyword():
+    """patching.py builds one hook per sweep cell; a bad signature would fail
+    on the first cell of every /patch request."""
+    source = inspect.getsource(patching)
+    closures = list(_hook_closures(source))
+    assert closures, "patching.py: no hook closures found"
+
+    for factory_name, fn in closures:
+        args = [a.arg for a in fn.args.args]
+        assert args[1:2] == [HOOK_KWARG], (
+            f"patching.{factory_name}.{fn.name} takes {args}; "
             f"second parameter must be {HOOK_KWARG!r}"
         )
 
