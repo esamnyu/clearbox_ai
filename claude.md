@@ -61,7 +61,8 @@ Hybrid in-browser frontend + FastAPI/TransformerLens backend. The Dec 2024 goal 
 | `src/lib/api.ts` | Frontend → backend HTTP client |
 | `src/components/RefusalBenchLeaderboard.tsx` | Bench leaderboard; loads cached static result from `public/bench/refusal_bench_default.json` on mount, optional live re-run via `/refusal-bench` |
 | `public/bench/` | Cached bench JSON served as a Vite static asset on the deploy |
-| `backend/main.py` | FastAPI endpoints: `/load`, `/logit-lens`, `/attention`, `/gradients`, `/steering-vector`, `/generate-steered`, **`/ablate-direction`**, `/pca-trajectories`, `/contrastive-pairs`, `/refusal-pairs`, `/harmfulness-probe`, `/refusal-bench`, `/refusal-bench/techniques` |
+| `backend/main.py` | FastAPI endpoints: `/load`, `/logit-lens`, `/attention`, `/gradients`, `/steering-vector`, `/generate-steered`, **`/ablate-direction`**, **`/patch`**, `/pca-trajectories`, `/contrastive-pairs`, `/refusal-pairs`, `/harmfulness-probe`, `/refusal-bench`, `/refusal-bench/techniques` |
+| `backend/patching.py` | Activation patching (Aug 2026, Ethan-approved scope add): denoising/noising sweeps over (layer × position) resid or (layer × head) z, logit-diff metric with unclamped normalized recovery; sweeps capped at `MAX_PATCH_RUNS` per request. Anchor invariant: (last layer, last position) resid patch must give recovery == 1 exactly. |
 | `backend/research.py` | TransformerLens-backed analysis logic |
 | `backend/model.py` | Singleton model loading |
 | `tests/fixtures/` | `mockPipelineFactory`, `mockTokenizer` |
