@@ -85,15 +85,24 @@ def logit_lens(prompt: str, top_k: int = 5) -> Dict[str, Any]:
     Moon's notebook showed this beautifully with the Eiffel Tower example:
     layers 0-10 all predicted "the", but layer 11 finally predicted "Paris".
 
-    Math: logits_L = hidden_state_L @ W_U.T
-    where W_U is the unembedding matrix (vocab x hidden_dim)
+    Math: logits_L = ln_final(hidden_state_L) @ W_U + b_U
+    where W_U is the unembedding matrix ([d_model, d_vocab]) and b_U its bias.
     """
     model = get_model()
     tokens, logits, cache = run_with_cache(prompt)
 
-    # W_U maps from hidden dimension to vocabulary
-    # In GPT-2, this is tied to the embedding matrix
-    W_U = model.W_U  # shape: [d_model, d_vocab]
+    # Unembedding: logits = ln_final(resid) @ W_U + b_U.
+    #
+    # Applying the final layer norm is NOT optional. W_U is trained to read a
+    # normalized residual stream; projecting the raw residual (as this code
+    # used to) distorts every layer's prediction and, critically, makes the
+    # last layer disagree with the model's own logits — destroying the one
+    # checkable property the logit lens has. With fold_ln=True (TransformerLens's
+    # from_pretrained default) ln_final is a LayerNormPre that centers and
+    # scales to unit variance, with the learnable affine folded into W_U/b_U;
+    # this recipe is correct in both the folded and unfolded cases.
+    W_U = model.W_U  # [d_model, d_vocab]
+    b_U = model.b_U  # [d_vocab]
 
     layer_predictions = []
 
@@ -110,10 +119,10 @@ def logit_lens(prompt: str, top_k: int = 5) -> Dict[str, Any]:
         # We only care about the last token position (next token prediction)
         last_token_resid = resid[0, -1, :]  # shape: [d_model]
 
-        # Project to vocabulary space
-        # Note: Moon's code skipped layer norm here for "raw" analysis
-        # For prediction parity with the model, you'd apply ln_final first
-        vocab_logits = last_token_resid @ W_U  # shape: [d_vocab]
+        # Normalize, then project to vocabulary space. ln_final applied to a
+        # single [d_model] vector normalizes over the last dim (see note above).
+        normed = model.ln_final(last_token_resid)
+        vocab_logits = normed @ W_U + b_U  # shape: [d_vocab]
         probs = F.softmax(vocab_logits, dim=-1)
 
         # Get top-k predictions
